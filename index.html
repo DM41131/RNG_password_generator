@@ -188,6 +188,156 @@
       accent-color: #4caf50;
     }
 
+    /* Device Selection */
+    .device-select {
+      padding: 8px 12px;
+      background: #2a2a2a;
+      color: #e0e0e0;
+      border: 2px solid #444;
+      border-radius: 6px;
+      font-size: 1rem;
+      min-width: 200px;
+    }
+
+    .device-select:focus {
+      border-color: #4caf50;
+      outline: none;
+    }
+
+    /* Gain Slider */
+    .gain-slider {
+      width: 200px;
+      height: 6px;
+      background: #333;
+      border-radius: 3px;
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    .gain-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      background: #4caf50;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .gain-slider::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+      background: #4caf50;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    #gainValue {
+      color: #4caf50;
+      font-weight: 600;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    /* Compact Level Meter */
+    .compact-level-meter {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-left: 1rem;
+    }
+
+    .compact-level-bar {
+      width: 100px;
+      height: 8px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .compact-level-bar::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      background: linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%);
+      width: var(--level, 0%);
+      transition: width 0.1s ease;
+      border-radius: 4px;
+    }
+
+    .compact-level-text {
+      color: #ccc;
+      font-size: 0.8rem;
+      font-weight: 500;
+      min-width: 35px;
+      text-align: center;
+    }
+
+    /* Button Styles */
+    .start-btn {
+      background: linear-gradient(45deg, #4caf50, #45a049);
+    }
+
+    .stop-btn {
+      background: linear-gradient(45deg, #f44336, #d32f2f);
+    }
+
+    .refresh-btn {
+      background: linear-gradient(45deg, #2196f3, #1976d2);
+    }
+
+    .stop-btn:disabled {
+      background: #666;
+      cursor: not-allowed;
+    }
+
+    /* Status Info */
+    .status-info {
+      margin: 1rem 0;
+      text-align: center;
+    }
+
+    .status-info span {
+      color: #ccc;
+      font-style: italic;
+      font-size: 0.9rem;
+    }
+
+    /* Visualization Container */
+    .visualization-container {
+      display: flex;
+      gap: 2rem;
+      justify-content: center;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .visualization-item {
+      flex: 1;
+      min-width: 300px;
+      text-align: center;
+    }
+
+    .visualization-item h4 {
+      color: #4caf50;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .visualization-item canvas {
+      width: 100%;
+      max-width: 400px;
+      height: auto;
+    }
+
+
     textarea {
       width: 100%;
       min-height: 120px;
@@ -287,6 +437,15 @@
         flex-direction: column;
         align-items: center;
       }
+
+      .visualization-container {
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .visualization-item {
+        min-width: 100%;
+      }
     }
   </style>
 </head>
@@ -304,25 +463,72 @@
 
   <!-- Main Content -->
   <main class="main-content">
+    <!-- Audio Input Section -->
+    <section class="section">
+      <h2>🎤 Audio Input Control</h2>
+      
+      <!-- Input Device Selection -->
+      <div class="form-group">
+        <div class="form-row">
+          <label for="inputDevice">Audio Input Device:</label>
+          <select id="inputDevice" class="device-select">
+            <option value="">Select input device...</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Level Controls -->
+      <div class="form-group">
+        <div class="form-row">
+          <label for="gainSlider">Input Gain:</label>
+          <input type="range" id="gainSlider" min="0" max="200" value="100" class="gain-slider">
+          <span id="gainValue">100%</span>
+          
+          <!-- Compact Level Monitor -->
+          <div class="compact-level-meter">
+            <div class="compact-level-bar" id="compactLevelBar"></div>
+            <span class="compact-level-text" id="compactLevelText">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Control Buttons -->
+      <div class="controls">
+        <button id="startBtn" class="start-btn">🎤 Start RNG</button>
+        <button id="stopBtn" class="stop-btn" disabled>⏹️ Stop RNG</button>
+        <button id="refreshDevicesBtn" class="refresh-btn">🔄 Refresh Devices</button>
+      </div>
+
+      <!-- Status Info -->
+      <div class="status-info">
+        <span id="waveformInfo">Click "Start RNG" to begin audio capture</span>
+      </div>
+
+    </section>
+    <!-- Visualization Section -->
+    <section class="section">
+      <div class="visualization-container">
+        <div class="visualization-item">
+          <h4>Audio Waveform</h4>
+          <canvas id="waveform" width="400" height="200"></canvas>
+        </div>
+        <div class="visualization-item">
+          <h4>Histogram of output uint8 values</h4>
+          <canvas id="histogram" width="400" height="200"></canvas>
+        </div>
+      </div>
+    </section>
+
+    
     <!-- RNG Section -->
     <section class="section">
-  <h2>🎤 Microphone Noise → Random Numbers (Von Neumann + SHA256)</h2>
-      <div class="controls">
-  <button id="startBtn">Start RNG</button>
-      </div>
+      <h2>🔢 Random Number Generation</h2>
   <div id="bits">Buffer: </div>
       <textarea id="uintArray" readonly placeholder="Random data will appear here..."></textarea>
   <div id="hashOutput"></div>
     </section>
 
-    <!-- Visualization Section -->
-    <section class="section">
-      <h3>Audio Waveform</h3>
-  <canvas id="waveform" width="500" height="200"></canvas>
 
-  <h3>Histogram of All Hashed uint8 values</h3>
-  <canvas id="histogram" width="500" height="200"></canvas>
-    </section>
 
     <!-- Password Generator Section -->
     <section class="section">
@@ -354,7 +560,7 @@
       <p>Uses microphone noise with Von Neumann correction and SHA-256 hashing for cryptographically secure random number generation</p>
       <div class="footer-links">
         <a href="#" onclick="alert('This app uses your microphone to generate truly random numbers. No data is sent to external servers.')">Privacy</a>
-        <a href="#" onclick="alert('The app uses Von Neumann correction to eliminate bias from audio noise, then applies SHA-256 hashing for additional security.')">How it works</a>
+        <a href="how-it-works.html">How it works</a>
       </div>
     </div>
   </footer>
@@ -425,7 +631,7 @@
         const barWidth = this.histCanvas.width / 256;
         for (let i = 0; i < 256; i++) {
           const h = (histogram[i] / maxCount) * this.histCanvas.height;
-          this.histCtx.fillStyle = "#4cafef";
+          this.histCtx.fillStyle = "#4caf50";
           this.histCtx.fillRect(i * barWidth, this.histCanvas.height - h, barWidth, h);
         }
       }
@@ -512,9 +718,23 @@
         this.levelBar = document.getElementById("levelBar");
         this.levelText = document.getElementById("levelText");
         
+        // New input control elements
+        this.inputDeviceSelect = document.getElementById("inputDevice");
+        this.gainSlider = document.getElementById("gainSlider");
+        this.gainValue = document.getElementById("gainValue");
+        this.startBtn = document.getElementById("startBtn");
+        this.stopBtn = document.getElementById("stopBtn");
+        this.refreshDevicesBtn = document.getElementById("refreshDevicesBtn");
+        this.waveformInfo = document.getElementById("waveformInfo");
+        this.compactLevelBar = document.getElementById("compactLevelBar");
+        this.compactLevelText = document.getElementById("compactLevelText");
+        
         // Audio context and analyzer
         this.audioCtx = null;
         this.analyser = null;
+        this.gainNode = null;
+        this.source = null;
+        this.stream = null;
         
         // Data buffers
         this.rawBitBuffer = [];
@@ -528,7 +748,123 @@
         
         // Animation frame ID for cleanup
         this.animationFrameId = null;
+        
+        // Initialize controls
+        this.initializeControls();
       }
+
+      /**
+       * Initialize all control event listeners and setup
+       */
+      initializeControls() {
+        // Gain slider
+        this.gainSlider.addEventListener('input', (e) => {
+          this.gainValue.textContent = e.target.value + '%';
+          if (this.gainNode) {
+            this.gainNode.gain.value = e.target.value / 100;
+          }
+        });
+
+        // Device selection
+        this.inputDeviceSelect.addEventListener('change', (e) => {
+          if (e.target.value && this.audioCtx) {
+            this.restartWithDevice(e.target.value);
+          }
+        });
+
+        // Refresh devices button
+        this.refreshDevicesBtn.addEventListener('click', () => {
+          this.loadAudioDevices();
+        });
+
+        // Start button
+        this.startBtn.addEventListener('click', () => {
+          this.start();
+        });
+
+        // Stop button
+        this.stopBtn.addEventListener('click', () => {
+          this.stop();
+        });
+
+        // Load initial devices
+        this.loadAudioDevices();
+      }
+
+      /**
+       * Load available audio input devices
+       */
+      async loadAudioDevices() {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const audioInputs = devices.filter(device => device.kind === 'audioinput');
+          
+          this.inputDeviceSelect.innerHTML = '<option value="">Select input device...</option>';
+          
+          audioInputs.forEach(device => {
+            const option = document.createElement('option');
+            option.value = device.deviceId;
+            option.textContent = device.label || `Microphone ${audioInputs.indexOf(device) + 1}`;
+            this.inputDeviceSelect.appendChild(option);
+          });
+        } catch (error) {
+          console.error('Error loading audio devices:', error);
+          this.waveformInfo.textContent = 'Error loading audio devices';
+        }
+      }
+
+      /**
+       * Restart audio with specific device
+       */
+      async restartWithDevice(deviceId) {
+        if (this.stream) {
+          this.stream.getTracks().forEach(track => track.stop());
+        }
+        
+        try {
+          const constraints = {
+            audio: {
+              deviceId: { exact: deviceId },
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          };
+          
+          this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+          this.setupAudioContext();
+        } catch (error) {
+          console.error('Error switching device:', error);
+          this.waveformInfo.textContent = 'Error switching to selected device';
+        }
+      }
+
+      /**
+       * Setup audio context with gain control
+       */
+      setupAudioContext() {
+        if (this.audioCtx) {
+          this.audioCtx.close();
+        }
+        
+        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        this.source = this.audioCtx.createMediaStreamSource(this.stream);
+        
+        // Create gain node for level control
+        this.gainNode = this.audioCtx.createGain();
+        this.gainNode.gain.value = this.gainSlider.value / 100;
+        
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = 2048;
+        this.analyser.smoothingTimeConstant = 0.8;
+        
+        // Connect audio nodes
+        this.source.connect(this.gainNode);
+        this.gainNode.connect(this.analyser);
+        
+        this.waveformInfo.textContent = 'Audio connected - Click Start RNG to begin';
+      }
+
 
       /**
        * Processes audio samples to extract random bits using Von Neumann method
@@ -592,20 +928,22 @@
         const rms = Math.sqrt(sum / data.length);
         const level = Math.min(100, Math.max(0, rms * 100));
         
-        // Update level bar
+        // Update app bar level meter
         this.levelBar.style.width = level + '%';
-        
-        // Update level text
         this.levelText.textContent = `Level: ${Math.round(level)}%`;
         
+        // Update compact level meter
+        this.compactLevelBar.style.setProperty('--level', level + '%');
+        this.compactLevelText.textContent = `${Math.round(level)}%`;
+        
         // Change color based on level
-        if (level < 30) {
-          this.levelBar.style.background = 'linear-gradient(90deg, #4caf50 0%, #4caf50 100%)';
-        } else if (level < 70) {
-          this.levelBar.style.background = 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 100%)';
-        } else {
-          this.levelBar.style.background = 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%)';
-        }
+        const colorGradient = level < 30 
+          ? 'linear-gradient(90deg, #4caf50 0%, #4caf50 100%)'
+          : level < 70 
+          ? 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 100%)'
+          : 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%)';
+        
+        this.levelBar.style.background = colorGradient;
       }
 
       /**
@@ -629,19 +967,31 @@
        */
       async start() {
         try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const source = this.audioCtx.createMediaStreamSource(stream);
+          // Get selected device or default
+          const deviceId = this.inputDeviceSelect.value;
+          const constraints = {
+            audio: {
+              deviceId: deviceId ? { exact: deviceId } : undefined,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          };
 
-          this.analyser = this.audioCtx.createAnalyser();
-          this.analyser.fftSize = 1024;
-
-          source.connect(this.analyser);
+          this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+          this.setupAudioContext();
           this.drawLoop();
+          
+          // Update UI
+          this.startBtn.disabled = true;
+          this.startBtn.textContent = '🎤 RNG Running...';
+          this.stopBtn.disabled = false;
+          this.waveformInfo.textContent = 'RNG is running - generating random numbers';
           
           return true;
         } catch (error) {
           console.error("Error starting audio RNG:", error);
+          this.waveformInfo.textContent = 'Error starting audio capture: ' + error.message;
           return false;
         }
       }
@@ -655,12 +1005,31 @@
           this.animationFrameId = null;
         }
         
+        if (this.stream) {
+          this.stream.getTracks().forEach(track => track.stop());
+          this.stream = null;
+        }
+        
         if (this.audioCtx) {
           this.audioCtx.close();
           this.audioCtx = null;
         }
         
         this.analyser = null;
+        this.gainNode = null;
+        this.source = null;
+        
+        // Update UI
+        this.startBtn.disabled = false;
+        this.startBtn.textContent = '🎤 Start RNG';
+        this.stopBtn.disabled = true;
+        this.waveformInfo.textContent = 'RNG stopped - Click Start RNG to begin again';
+        
+        // Clear level meters
+        this.levelBar.style.width = '0%';
+        this.levelText.textContent = 'Level: 0%';
+        this.compactLevelBar.style.setProperty('--level', '0%');
+        this.compactLevelText.textContent = '0%';
       }
 
       /**
@@ -680,15 +1049,7 @@
     const audioRNG = new AudioRNG();
     const passwordGenerator = audioRNG.passwordGenerator;
 
-    // Set up event listeners
-    document.getElementById("startBtn").onclick = async () => {
-      const success = await audioRNG.start();
-      if (success) {
-        document.getElementById("startBtn").disabled = true;
-        document.getElementById("startBtn").textContent = "RNG Running...";
-      }
-    };
-
+    // Set up event listeners (only for password generation)
     document.getElementById("genPwBtn").onclick = () => {
       passwordGenerator.generatePassword(audioRNG.getRandomData());
     };
