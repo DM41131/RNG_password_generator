@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Audio Noise RNG (Von Neumann + SHA256 + Password)</title>
+  <style>
+    body { background:#111; color:#eee; font-family:sans-serif; text-align:center; }
+    canvas { display:block; margin:20px auto; background:#222; border-radius:8px; }
+    button { padding:10px 20px; margin:10px; background:#4caf50; border:none; border-radius:6px; color:white; cursor:pointer; }
+    #bits { margin-top:20px; font-size:16px; font-family: monospace; word-break: break-all; }
+    textarea, input { width:90%; margin:10px auto; background:#222; color:#0f0; font-family:monospace; font-size:14px; border:1px solid #555; border-radius:6px; padding:8px; display:block; }
+    label { color:#ccc; margin:5px; display:inline-block; }
+  </style>
+</head>
+<body>
+  <h2>🎤 Microphone Noise → Random Numbers (Von Neumann + SHA256)</h2>
+  <button id="startBtn">Start RNG</button>
+  <div id="bits">Buffer: </div>
+  <textarea id="uintArray" readonly></textarea>
+  <div id="hashOutput"></div>
+
+  <h3>Waveform</h3>
+  <canvas id="waveform" width="500" height="200"></canvas>
+
+  <h3>Histogram of All Hashed uint8 values</h3>
+  <canvas id="histogram" width="500" height="200"></canvas>
+
+  <h3>Password Generator</h3>
+  <label>Password length:
+    <input type="number" id="pwLength" value="16" min="8" max="64">
+  </label>
+  <div>
+    <label><input type="checkbox" id="chkUpper" checked> Uppercase (A-Z)</label>
+    <label><input type="checkbox" id="chkLower" checked> Lowercase (a-z)</label>
+    <label><input type="checkbox" id="chkNums" checked> Numbers (0-9)</label>
+    <label><input type="checkbox" id="chkSyms" checked> Symbols (!@#$...)</label>
+  </div>
+  <button id="genPwBtn">Generate Password</button>
+  <textarea id="passwordBox" readonly></textarea>
+
+  <script>
+    const startBtn = document.getElementById("startBtn");
+    const bitsEl = document.getElementById("bits");
+    const uintArrayEl = document.getElementById("uintArray");
+    const hashOutput = document.getElementById("hashOutput");
+    const genPwBtn = document.getElementById("genPwBtn");
+    const pwLengthEl = document.getElementById("pwLength");
+    const passwordBox = document.getElementById("passwordBox");
+
+    const chkUpper = document.getElementById("chkUpper");
+    const chkLower = document.getElementById("chkLower");
+    const chkNums = document.getElementById("chkNums");
+    const chkSyms = document.getElementById("chkSyms");
+
+    const waveformCanvas = document.getElementById("waveform");
+    const waveCtx = waveformCanvas.getContext("2d");
+
+    const histCanvas = document.getElementById("histogram");
+    const histCtx = histCanvas.getContext("2d");
+
+    let audioCtx, analyser;
+    let rawBitBuffer = [];
+    let finalBitBuffer = [];
+    let collectedNumbers = [];
+    let uintArray = [];
+
+    // pack 8 bits into a byte
+    function bitsToUint8(bits) {
+      let value = 0;
+      for (let i = 0; i < bits.length; i++) {
+        value = (value << 1) | bits[i];
+      }
+      return value;
+    }
+
+    // convert buffer to hex string
+    function buf2hex(buffer) {
+      return [...buffer].map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    // SHA256 hash
+    async function sha256String(str) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(str);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+      return new Uint8Array(hashBuffer);
+    }
+
+    // main randomness extractor
+    async function processSamples(data) {
+      for (let i = 0; i < data.length; i++) {
+        let sample = data[i];
+        let bit = sample & 1;
+        rawBitBuffer.push(bit);
+
+        if (rawBitBuffer.length >= 2) {
+          let b1 = rawBitBuffer.shift();
+          let b2 = rawBitBuffer.shift();
+
+          if (b1 === 0 && b2 === 1) finalBitBuffer.push(0);
+          else if (b1 === 1 && b2 === 0) finalBitBuffer.push(1);
+
+          if (finalBitBuffer.length === 8) {
+            let uint8 = bitsToUint8(finalBitBuffer);
+            collectedNumbers.push(uint8);
+            finalBitBuffer = [];
+
+            if (collectedNumbers.length >= 1000) {
+              let asciiString = String.fromCharCode(...collectedNumbers.slice(0, 1000));
+              const digest = await sha256String(asciiString);
+
+              uintArray.push(...digest);
+              collectedNumbers = [];
+
+              uintArrayEl.value = uintArray.slice(-50).join(", ");
+              hashOutput.textContent =
+                "Last SHA-256 Hash (hex): " + buf2hex(digest);
+
+              drawHistogram();
+            }
+          }
+        }
+      }
+      bitsEl.textContent =
+        "Current unbiased bits (" + finalBitBuffer.length + "/8): " + finalBitBuffer.join("");
+    }
+
+    function drawHistogram() {
+      let histogram = new Array(256).fill(0);
+      uintArray.forEach(v => histogram[v]++);
+
+      histCtx.clearRect(0, 0, histCanvas.width, histCanvas.height);
+      let maxCount = Math.max(...histogram);
+      if (maxCount === 0) return;
+
+      let barWidth = histCanvas.width / 256;
+      for (let i = 0; i < 256; i++) {
+        let h = (histogram[i] / maxCount) * histCanvas.height;
+        histCtx.fillStyle = "#4cafef";
+        histCtx.fillRect(i * barWidth, histCanvas.height - h, barWidth, h);
+      }
+    }
+
+    function drawLoop() {
+      requestAnimationFrame(drawLoop);
+      if (!analyser) return;
+
+      let data = new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(data);
+
+      processSamples(data);
+
+      waveCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+      waveCtx.beginPath();
+      waveCtx.strokeStyle = "#0f0";
+      waveCtx.lineWidth = 2;
+      for (let x = 0; x < data.length; x++) {
+        let y = (data[x] / 255) * waveformCanvas.height;
+        if (x === 0) waveCtx.moveTo(x, y);
+        else waveCtx.lineTo((x / data.length) * waveformCanvas.width, y);
+      }
+      waveCtx.stroke();
+    }
+
+    startBtn.onclick = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+
+      source.connect(analyser);
+      drawLoop();
+      startBtn.disabled = true;
+    };
+
+    // 🔑 Password generator with checkboxes
+    genPwBtn.onclick = () => {
+      if (uintArray.length < 32) {
+        passwordBox.value = "Not enough random data yet. Wait for hashing...";
+        return;
+      }
+
+      let charset = "";
+      if (chkUpper.checked) charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      if (chkLower.checked) charset += "abcdefghijklmnopqrstuvwxyz";
+      if (chkNums.checked) charset += "0123456789";
+      if (chkSyms.checked) charset += "!@#$%^&*()-_=+[]{};:,.<>?";
+
+      if (charset.length === 0) {
+        passwordBox.value = "Please select at least one character set.";
+        return;
+      }
+
+      const pwLength = Math.max(8, Math.min(64, parseInt(pwLengthEl.value) || 16));
+
+      let password = "";
+      for (let i = 0; i < pwLength; i++) {
+        let r = uintArray[(i + uintArray.length - pwLength) % uintArray.length];
+        password += charset[r % charset.length];
+      }
+      passwordBox.value = password;
+    };
+  </script>
+</body>
+</html>
