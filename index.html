@@ -4,68 +4,371 @@
   <meta charset="UTF-8">
   <title>Audio Noise RNG (Von Neumann + SHA256 + Password)</title>
   <style>
-    body { background:#111; color:#eee; font-family:sans-serif; text-align:center; }
-    canvas { display:block; margin:20px auto; background:#222; border-radius:8px; }
-    button { padding:10px 20px; margin:10px; background:#4caf50; border:none; border-radius:6px; color:white; cursor:pointer; }
-    #bits { margin-top:20px; font-size:16px; font-family: monospace; word-break: break-all; }
-    textarea, input { width:90%; margin:10px auto; background:#222; color:#0f0; font-family:monospace; font-size:14px; border:1px solid #555; border-radius:6px; padding:8px; display:block; }
-    label { color:#ccc; margin:5px; display:inline-block; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+      color: #e0e0e0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* App Bar */
+    .app-bar {
+      background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+      padding: 1rem 2rem;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .app-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: white;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+
+    .level-meter-container {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .level-meter {
+      width: 200px;
+      height: 20px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .level-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%);
+      width: 0%;
+      transition: width 0.1s ease;
+      border-radius: 10px;
+    }
+
+    .level-text {
+      color: white;
+      font-size: 0.9rem;
+      font-weight: 500;
+      min-width: 60px;
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      padding: 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .section {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .section h2, .section h3 {
+      color: #4caf50;
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+
+    .section h2 {
+      font-size: 1.8rem;
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .section h3 {
+      font-size: 1.3rem;
+      border-bottom: 2px solid #4caf50;
+      padding-bottom: 0.5rem;
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 12px 24px;
+      background: linear-gradient(45deg, #4caf50, #45a049);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+    }
+
+    button:disabled {
+      background: #666;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    /* Canvas */
+    canvas {
+      display: block;
+      margin: 1rem auto;
+      background: #1a1a1a;
+      border-radius: 8px;
+      border: 2px solid #333;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Form Elements */
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    label {
+      color: #ccc;
+      margin: 0.5rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 500;
+    }
+
+    input[type="number"] {
+      width: 100px;
+      padding: 8px 12px;
+      background: #2a2a2a;
+      color: #4caf50;
+      border: 2px solid #444;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 1rem;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #4caf50;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      margin: 1rem auto;
+      background: #1a1a1a;
+      color: #4caf50;
+      font-family: monospace;
+      font-size: 14px;
+      border: 2px solid #444;
+      border-radius: 8px;
+      padding: 12px;
+      resize: vertical;
+    }
+
+    #bits {
+      font-size: 16px;
+      font-family: monospace;
+      word-break: break-all;
+      background: #1a1a1a;
+      padding: 1rem;
+      border-radius: 8px;
+      border: 2px solid #333;
+      margin: 1rem 0;
+    }
+
+    #hashOutput {
+      background: #1a1a1a;
+      padding: 1rem;
+      border-radius: 8px;
+      border: 2px solid #333;
+      margin: 1rem 0;
+      font-family: monospace;
+      color: #4caf50;
+    }
+
+    /* Footer */
+    .footer {
+      background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+      padding: 1.5rem 2rem;
+      text-align: center;
+      color: white;
+      margin-top: auto;
+    }
+
+    .footer-content {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .footer p {
+      margin-bottom: 0.5rem;
+      opacity: 0.9;
+    }
+
+    .footer-links {
+      margin-top: 1rem;
+    }
+
+    .footer-links a {
+      color: #4caf50;
+      text-decoration: none;
+      margin: 0 1rem;
+      transition: color 0.3s ease;
+    }
+
+    .footer-links a:hover {
+      color: #66bb6a;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+      .app-bar {
+        padding: 1rem;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .level-meter-container {
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .level-meter {
+        width: 150px;
+      }
+
+      .main-content {
+        padding: 1rem;
+      }
+
+      .controls {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .form-row {
+        flex-direction: column;
+        align-items: center;
+      }
+    }
   </style>
 </head>
 <body>
-  <h2>🎤 Microphone Noise → Random Numbers (Von Neumann + SHA256)</h2>
-  <button id="startBtn">Start RNG</button>
-  <div id="bits">Buffer: </div>
-  <textarea id="uintArray" readonly></textarea>
-  <div id="hashOutput"></div>
+  <!-- App Bar -->
+  <header class="app-bar">
+    <h1 class="app-title">🎤 Audio RNG Password Generator</h1>
+    <div class="level-meter-container">
+      <div class="level-meter">
+        <div class="level-bar" id="levelBar"></div>
+      </div>
+      <div class="level-text" id="levelText">Level: 0%</div>
+    </div>
+  </header>
 
-  <h3>Waveform</h3>
+  <!-- Main Content -->
+  <main class="main-content">
+    <!-- RNG Section -->
+    <section class="section">
+  <h2>🎤 Microphone Noise → Random Numbers (Von Neumann + SHA256)</h2>
+      <div class="controls">
+  <button id="startBtn">Start RNG</button>
+      </div>
+  <div id="bits">Buffer: </div>
+      <textarea id="uintArray" readonly placeholder="Random data will appear here..."></textarea>
+  <div id="hashOutput"></div>
+    </section>
+
+    <!-- Visualization Section -->
+    <section class="section">
+      <h3>Audio Waveform</h3>
   <canvas id="waveform" width="500" height="200"></canvas>
 
   <h3>Histogram of All Hashed uint8 values</h3>
   <canvas id="histogram" width="500" height="200"></canvas>
+    </section>
 
-  
-  <h3>Password Generator</h3>
+    <!-- Password Generator Section -->
+    <section class="section">
+      <h3>🔑 Password Generator</h3>
+      <div class="form-group">
+        <div class="form-row">
   <label>Password length:
     <input type="number" id="pwLength" value="16" min="8" max="64">
   </label>
-  <div>
+        </div>
+        <div class="form-row">
     <label><input type="checkbox" id="chkUpper" checked> Uppercase (A-Z)</label>
     <label><input type="checkbox" id="chkLower" checked> Lowercase (a-z)</label>
     <label><input type="checkbox" id="chkNums" checked> Numbers (0-9)</label>
     <label><input type="checkbox" id="chkSyms" checked> Symbols (!@#$...)</label>
   </div>
+      </div>
+      <div class="controls">
   <button id="genPwBtn">Generate Password</button>
-  <textarea id="passwordBox" readonly></textarea>
+      </div>
+      <textarea id="passwordBox" readonly placeholder="Generated password will appear here..."></textarea>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-content">
+      <p><strong>Audio RNG Password Generator</strong></p>
+      <p>Uses microphone noise with Von Neumann correction and SHA-256 hashing for cryptographically secure random number generation</p>
+      <div class="footer-links">
+        <a href="#" onclick="alert('This app uses your microphone to generate truly random numbers. No data is sent to external servers.')">Privacy</a>
+        <a href="#" onclick="alert('The app uses Von Neumann correction to eliminate bias from audio noise, then applies SHA-256 hashing for additional security.')">How it works</a>
+      </div>
+    </div>
+  </footer>
 
   <script>
-    const startBtn = document.getElementById("startBtn");
-    const bitsEl = document.getElementById("bits");
-    const uintArrayEl = document.getElementById("uintArray");
-    const hashOutput = document.getElementById("hashOutput");
-    const genPwBtn = document.getElementById("genPwBtn");
-    const pwLengthEl = document.getElementById("pwLength");
-    const passwordBox = document.getElementById("passwordBox");
-
-    const chkUpper = document.getElementById("chkUpper");
-    const chkLower = document.getElementById("chkLower");
-    const chkNums = document.getElementById("chkNums");
-    const chkSyms = document.getElementById("chkSyms");
-
-    const waveformCanvas = document.getElementById("waveform");
-    const waveCtx = waveformCanvas.getContext("2d");
-
-    const histCanvas = document.getElementById("histogram");
-    const histCtx = histCanvas.getContext("2d");
-
-    let audioCtx, analyser;
-    let rawBitBuffer = [];
-    let finalBitBuffer = [];
-    let collectedNumbers = [];
-    let uintArray = [];
-
-    // pack 8 bits into a byte
+    // ============================================================================
+    // UTILITY FUNCTIONS
+    // ============================================================================
+    
+    /**
+     * Packs 8 bits into a single byte
+     * @param {number[]} bits - Array of bits (0s and 1s)
+     * @returns {number} The resulting byte value
+     */
     function bitsToUint8(bits) {
       let value = 0;
       for (let i = 0; i < bits.length; i++) {
@@ -74,12 +377,20 @@
       return value;
     }
 
-    // convert buffer to hex string
+    /**
+     * Converts a buffer to a hexadecimal string
+     * @param {Uint8Array} buffer - The buffer to convert
+     * @returns {string} Hexadecimal representation
+     */
     function buf2hex(buffer) {
       return [...buffer].map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    // SHA256 hash
+    /**
+     * Generates SHA-256 hash of a string
+     * @param {string} str - String to hash
+     * @returns {Promise<Uint8Array>} The hash as a Uint8Array
+     */
     async function sha256String(str) {
       const encoder = new TextEncoder();
       const data = encoder.encode(str);
@@ -87,121 +398,299 @@
       return new Uint8Array(hashBuffer);
     }
 
-    // main randomness extractor
-    async function processSamples(data) {
-      for (let i = 0; i < data.length; i++) {
-        let sample = data[i];
-        let bit = sample & 1;
-        rawBitBuffer.push(bit);
+    // ============================================================================
+    // VISUALIZATION MANAGER CLASS
+    // ============================================================================
+    
+    class VisualizationManager {
+      constructor() {
+        this.waveformCanvas = document.getElementById("waveform");
+        this.waveCtx = this.waveformCanvas.getContext("2d");
+        this.histCanvas = document.getElementById("histogram");
+        this.histCtx = this.histCanvas.getContext("2d");
+      }
 
-        if (rawBitBuffer.length >= 2) {
-          let b1 = rawBitBuffer.shift();
-          let b2 = rawBitBuffer.shift();
+      /**
+       * Draws histogram of all collected uint8 values
+       * @param {number[]} uintArray - Array of uint8 values to visualize
+       */
+      drawHistogram(uintArray) {
+        const histogram = new Array(256).fill(0);
+        uintArray.forEach(v => histogram[v]++);
 
-          if (b1 === 0 && b2 === 1) finalBitBuffer.push(0);
-          else if (b1 === 1 && b2 === 0) finalBitBuffer.push(1);
+        this.histCtx.clearRect(0, 0, this.histCanvas.width, this.histCanvas.height);
+        const maxCount = Math.max(...histogram);
+        if (maxCount === 0) return;
 
-          if (finalBitBuffer.length === 8) {
-            let uint8 = bitsToUint8(finalBitBuffer);
-            collectedNumbers.push(uint8);
-            finalBitBuffer = [];
+        const barWidth = this.histCanvas.width / 256;
+        for (let i = 0; i < 256; i++) {
+          const h = (histogram[i] / maxCount) * this.histCanvas.height;
+          this.histCtx.fillStyle = "#4cafef";
+          this.histCtx.fillRect(i * barWidth, this.histCanvas.height - h, barWidth, h);
+        }
+      }
 
-            if (collectedNumbers.length >= 1000) {
-              let asciiString = String.fromCharCode(...collectedNumbers.slice(0, 1000));
-              const digest = await sha256String(asciiString);
+      /**
+       * Draws the audio waveform
+       * @param {Uint8Array} data - Audio data to visualize
+       */
+      drawWaveform(data) {
+        this.waveCtx.clearRect(0, 0, this.waveformCanvas.width, this.waveformCanvas.height);
+        this.waveCtx.beginPath();
+        this.waveCtx.strokeStyle = "#0f0";
+        this.waveCtx.lineWidth = 2;
+        
+        for (let x = 0; x < data.length; x++) {
+          const y = (data[x] / 255) * this.waveformCanvas.height;
+          if (x === 0) {
+            this.waveCtx.moveTo(x, y);
+          } else {
+            this.waveCtx.lineTo((x / data.length) * this.waveformCanvas.width, y);
+          }
+        }
+        this.waveCtx.stroke();
+      }
+    }
 
-              uintArray.push(...digest);
-              collectedNumbers = [];
+    // ============================================================================
+    // PASSWORD GENERATOR CLASS
+    // ============================================================================
+    
+    class PasswordGenerator {
+      constructor() {
+        this.passwordBox = document.getElementById("passwordBox");
+        this.pwLengthEl = document.getElementById("pwLength");
+        this.chkUpper = document.getElementById("chkUpper");
+        this.chkLower = document.getElementById("chkLower");
+        this.chkNums = document.getElementById("chkNums");
+        this.chkSyms = document.getElementById("chkSyms");
+      }
 
-              uintArrayEl.value = uintArray.slice(-50).join(", ");
-              hashOutput.textContent =
-                "Last SHA-256 Hash (hex): " + buf2hex(digest);
+      /**
+       * Generates a password using the provided random data
+       * @param {number[]} uintArray - Array of random uint8 values
+       */
+      generatePassword(uintArray) {
+        if (uintArray.length < 32) {
+          this.passwordBox.value = "Not enough random data yet. Wait for hashing...";
+          return;
+        }
 
-              drawHistogram();
+        let charset = "";
+        if (this.chkUpper.checked) charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        if (this.chkLower.checked) charset += "abcdefghijklmnopqrstuvwxyz";
+        if (this.chkNums.checked) charset += "0123456789";
+        if (this.chkSyms.checked) charset += "!@#$%^&*()-_=+[]{};:,.<>?";
+
+        if (charset.length === 0) {
+          this.passwordBox.value = "Please select at least one character set.";
+          return;
+        }
+
+        const pwLength = Math.max(8, Math.min(64, parseInt(this.pwLengthEl.value) || 16));
+        let password = "";
+        
+        for (let i = 0; i < pwLength; i++) {
+          const r = uintArray[(i + uintArray.length - pwLength) % uintArray.length];
+          password += charset[r % charset.length];
+        }
+        
+        this.passwordBox.value = password;
+      }
+    }
+
+    // ============================================================================
+    // AUDIO RNG CLASS
+    // ============================================================================
+    
+    class AudioRNG {
+      constructor() {
+        // DOM elements
+        this.bitsEl = document.getElementById("bits");
+        this.uintArrayEl = document.getElementById("uintArray");
+        this.hashOutput = document.getElementById("hashOutput");
+        this.levelBar = document.getElementById("levelBar");
+        this.levelText = document.getElementById("levelText");
+        
+        // Audio context and analyzer
+        this.audioCtx = null;
+        this.analyser = null;
+        
+        // Data buffers
+        this.rawBitBuffer = [];
+        this.finalBitBuffer = [];
+        this.collectedNumbers = [];
+        this.uintArray = [];
+        
+        // Visualization and password generator
+        this.visualizationManager = new VisualizationManager();
+        this.passwordGenerator = new PasswordGenerator();
+        
+        // Animation frame ID for cleanup
+        this.animationFrameId = null;
+      }
+
+      /**
+       * Processes audio samples to extract random bits using Von Neumann method
+       * @param {Uint8Array} data - Audio sample data
+       */
+      async processSamples(data) {
+        for (let i = 0; i < data.length; i++) {
+          const sample = data[i];
+          const bit = sample & 1;
+          this.rawBitBuffer.push(bit);
+
+          if (this.rawBitBuffer.length >= 2) {
+            const b1 = this.rawBitBuffer.shift();
+            const b2 = this.rawBitBuffer.shift();
+
+            // Von Neumann correction: only use 01 and 10 pairs
+            if (b1 === 0 && b2 === 1) this.finalBitBuffer.push(0);
+            else if (b1 === 1 && b2 === 0) this.finalBitBuffer.push(1);
+
+            // When we have 8 bits, create a byte
+            if (this.finalBitBuffer.length === 8) {
+              const uint8 = bitsToUint8(this.finalBitBuffer);
+              this.collectedNumbers.push(uint8);
+              this.finalBitBuffer = [];
+
+              // When we have enough numbers, hash them
+              if (this.collectedNumbers.length >= 1000) {
+                const asciiString = String.fromCharCode(...this.collectedNumbers.slice(0, 1000));
+                const digest = await sha256String(asciiString);
+
+                this.uintArray.push(...digest);
+                this.collectedNumbers = [];
+
+                // Update UI
+                this.uintArrayEl.value = this.uintArray.slice(-50).join(", ");
+                this.hashOutput.textContent = "Last SHA-256 Hash (hex): " + buf2hex(digest);
+
+                // Update visualization
+                this.visualizationManager.drawHistogram(this.uintArray);
+              }
             }
           }
         }
+        
+        // Update bit buffer display
+        this.bitsEl.textContent = 
+          "Current unbiased bits (" + this.finalBitBuffer.length + "/8): " + this.finalBitBuffer.join("");
       }
-      bitsEl.textContent =
-        "Current unbiased bits (" + finalBitBuffer.length + "/8): " + finalBitBuffer.join("");
-    }
 
-    function drawHistogram() {
-      let histogram = new Array(256).fill(0);
-      uintArray.forEach(v => histogram[v]++);
-
-      histCtx.clearRect(0, 0, histCanvas.width, histCanvas.height);
-      let maxCount = Math.max(...histogram);
-      if (maxCount === 0) return;
-
-      let barWidth = histCanvas.width / 256;
-      for (let i = 0; i < 256; i++) {
-        let h = (histogram[i] / maxCount) * histCanvas.height;
-        histCtx.fillStyle = "#4cafef";
-        histCtx.fillRect(i * barWidth, histCanvas.height - h, barWidth, h);
+      /**
+       * Updates the level meter based on audio input
+       * @param {Uint8Array} data - Audio sample data
+       */
+      updateLevelMeter(data) {
+        // Calculate RMS (Root Mean Square) for level detection
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const sample = (data[i] - 128) / 128; // Convert to -1 to 1 range
+          sum += sample * sample;
+        }
+        const rms = Math.sqrt(sum / data.length);
+        const level = Math.min(100, Math.max(0, rms * 100));
+        
+        // Update level bar
+        this.levelBar.style.width = level + '%';
+        
+        // Update level text
+        this.levelText.textContent = `Level: ${Math.round(level)}%`;
+        
+        // Change color based on level
+        if (level < 30) {
+          this.levelBar.style.background = 'linear-gradient(90deg, #4caf50 0%, #4caf50 100%)';
+        } else if (level < 70) {
+          this.levelBar.style.background = 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 100%)';
+        } else {
+          this.levelBar.style.background = 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%)';
+        }
       }
-    }
 
-    function drawLoop() {
-      requestAnimationFrame(drawLoop);
-      if (!analyser) return;
+      /**
+       * Main drawing loop that processes audio and updates visualizations
+       */
+      drawLoop() {
+        this.animationFrameId = requestAnimationFrame(() => this.drawLoop());
+        
+        if (!this.analyser) return;
 
-      let data = new Uint8Array(analyser.fftSize);
-      analyser.getByteTimeDomainData(data);
+        const data = new Uint8Array(this.analyser.fftSize);
+        this.analyser.getByteTimeDomainData(data);
 
-      processSamples(data);
-
-      waveCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
-      waveCtx.beginPath();
-      waveCtx.strokeStyle = "#0f0";
-      waveCtx.lineWidth = 2;
-      for (let x = 0; x < data.length; x++) {
-        let y = (data[x] / 255) * waveformCanvas.height;
-        if (x === 0) waveCtx.moveTo(x, y);
-        else waveCtx.lineTo((x / data.length) * waveformCanvas.width, y);
+        this.processSamples(data);
+        this.updateLevelMeter(data);
+        this.visualizationManager.drawWaveform(data);
       }
-      waveCtx.stroke();
-    }
 
-    startBtn.onclick = async () => {
+      /**
+       * Starts the audio RNG by requesting microphone access
+       */
+      async start() {
+        try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioCtx.createMediaStreamSource(stream);
+          this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const source = this.audioCtx.createMediaStreamSource(stream);
 
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
+          this.analyser = this.audioCtx.createAnalyser();
+          this.analyser.fftSize = 1024;
 
-      source.connect(analyser);
-      drawLoop();
-      startBtn.disabled = true;
+          source.connect(this.analyser);
+          this.drawLoop();
+          
+          return true;
+        } catch (error) {
+          console.error("Error starting audio RNG:", error);
+          return false;
+        }
+      }
+
+      /**
+       * Stops the audio RNG and cleans up resources
+       */
+      stop() {
+        if (this.animationFrameId) {
+          cancelAnimationFrame(this.animationFrameId);
+          this.animationFrameId = null;
+        }
+        
+        if (this.audioCtx) {
+          this.audioCtx.close();
+          this.audioCtx = null;
+        }
+        
+        this.analyser = null;
+      }
+
+      /**
+       * Gets the current random data array
+       * @returns {number[]} Array of random uint8 values
+       */
+      getRandomData() {
+        return this.uintArray;
+      }
+    }
+
+    // ============================================================================
+    // APPLICATION INITIALIZATION
+    // ============================================================================
+    
+    // Create the main RNG instance
+    const audioRNG = new AudioRNG();
+    const passwordGenerator = audioRNG.passwordGenerator;
+
+    // Set up event listeners
+    document.getElementById("startBtn").onclick = async () => {
+      const success = await audioRNG.start();
+      if (success) {
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("startBtn").textContent = "RNG Running...";
+      }
     };
 
-    // 🔑 Password generator with checkboxes
-    genPwBtn.onclick = () => {
-      if (uintArray.length < 32) {
-        passwordBox.value = "Not enough random data yet. Wait for hashing...";
-        return;
-      }
-
-      let charset = "";
-      if (chkUpper.checked) charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      if (chkLower.checked) charset += "abcdefghijklmnopqrstuvwxyz";
-      if (chkNums.checked) charset += "0123456789";
-      if (chkSyms.checked) charset += "!@#$%^&*()-_=+[]{};:,.<>?";
-
-      if (charset.length === 0) {
-        passwordBox.value = "Please select at least one character set.";
-        return;
-      }
-
-      const pwLength = Math.max(8, Math.min(64, parseInt(pwLengthEl.value) || 16));
-
-      let password = "";
-      for (let i = 0; i < pwLength; i++) {
-        let r = uintArray[(i + uintArray.length - pwLength) % uintArray.length];
-        password += charset[r % charset.length];
-      }
-      passwordBox.value = password;
+    document.getElementById("genPwBtn").onclick = () => {
+      passwordGenerator.generatePassword(audioRNG.getRandomData());
     };
   </script>
 </body>
