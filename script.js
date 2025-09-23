@@ -46,6 +46,46 @@ class VisualizationManager {
     this.waveCtx = this.waveformCanvas.getContext("2d");
     this.histCanvas = document.getElementById("histogram");
     this.histCtx = this.histCanvas.getContext("2d");
+    this.bitMatrixCanvas = document.getElementById("bitMatrix");
+    this.bitMatrixCtx = this.bitMatrixCanvas.getContext("2d");
+    
+    // Bit matrix optimization properties
+    this.matrixWidth = 200;
+    this.matrixHeight = 100;
+    this.pixelSize = 2;
+    this.canvasWidth = this.matrixWidth * this.pixelSize;
+    this.canvasHeight = this.matrixHeight * this.pixelSize;
+    this.bitMatrixData = new Array(this.matrixWidth * this.matrixHeight).fill(0);
+    this.lastBitCount = 0;
+    this.updateThrottle = 0;
+    this.updateInterval = 50; // Reduced to 50ms for better responsiveness
+    this.showGrid = false; // Disable grid by default for better performance
+    this.refreshCycle = 0; // Track refresh cycles
+    this.isMatrixComplete = false; // Track if matrix is fully loaded
+    
+    // Performance optimization properties
+    this.imageData = null; // For direct pixel manipulation
+    this.pendingUpdates = []; // Batch updates for better performance
+    this.animationFrameId = null; // Track animation frame
+    this.performanceMetrics = {
+      lastUpdateTime: 0,
+      updateCount: 0,
+      averageUpdateTime: 0
+    };
+    this.adaptiveInterval = true; // Enable adaptive update frequency
+    
+    // Set initial canvas size based on matrix dimensions
+    this.updateCanvasSize();
+  }
+
+  /**
+   * Update canvas size to match matrix dimensions
+   */
+  updateCanvasSize() {
+    if (this.bitMatrixCanvas) {
+      this.bitMatrixCanvas.width = this.canvasWidth;
+      this.bitMatrixCanvas.height = this.canvasHeight;
+    }
   }
 
   /**
@@ -87,6 +127,294 @@ class VisualizationManager {
       }
     }
     this.waveCtx.stroke();
+  }
+
+  /**
+   * Optimized bit conversion using bitwise operations and pre-allocated array
+   * @param {number[]} uintArray - Array of uint8 values
+   * @returns {number[]} Array of bits (0s and 1s)
+   */
+  uint8ArrayToBits(uintArray) {
+    const totalBits = uintArray.length * 8;
+    const bits = new Array(totalBits);
+    
+    for (let i = 0; i < uintArray.length; i++) {
+      const byte = uintArray[i];
+      const baseIndex = i * 8;
+      
+      // Unroll the bit extraction loop for better performance
+      bits[baseIndex] = (byte >> 7) & 1;
+      bits[baseIndex + 1] = (byte >> 6) & 1;
+      bits[baseIndex + 2] = (byte >> 5) & 1;
+      bits[baseIndex + 3] = (byte >> 4) & 1;
+      bits[baseIndex + 4] = (byte >> 3) & 1;
+      bits[baseIndex + 5] = (byte >> 2) & 1;
+      bits[baseIndex + 6] = (byte >> 1) & 1;
+      bits[baseIndex + 7] = byte & 1;
+    }
+    
+    return bits;
+  }
+
+  /**
+   * High-performance Bit Matrix Plot with ImageData optimization
+   * @param {number[]} uintArray - Array of uint8 values to visualize as bits
+   */
+  drawBitMatrix(uintArray) {
+    if (!this.bitMatrixCanvas || !this.bitMatrixCtx) return;
+    
+    const startTime = performance.now();
+    
+    // Adaptive throttling based on performance
+    const now = Date.now();
+    if (this.adaptiveInterval && now - this.updateThrottle < this.updateInterval) {
+      return;
+    }
+    this.updateThrottle = now;
+    
+    // Convert uint8 array to bits
+    const bits = this.uint8ArrayToBits(uintArray);
+    const currentBitCount = bits.length;
+    const maxMatrixBits = this.matrixWidth * this.matrixHeight;
+    
+    // Calculate canvas offsets
+    const offsetX = (this.bitMatrixCanvas.width - this.canvasWidth) / 2;
+    const offsetY = (this.bitMatrixCanvas.height - this.canvasHeight) / 2;
+    
+    // Initialize ImageData for direct pixel manipulation
+    if (!this.imageData) {
+      this.imageData = this.bitMatrixCtx.createImageData(this.canvasWidth, this.canvasHeight);
+      this.initializeImageData();
+    }
+    
+    // Check if matrix is complete and needs full refresh
+    if (this.lastBitCount >= maxMatrixBits && currentBitCount > maxMatrixBits) {
+      this.performFullRefresh(offsetX, offsetY);
+      return;
+    }
+    
+    // Initialize canvas only once
+    if (this.lastBitCount === 0 && !this.isMatrixComplete) {
+      this.initializeCanvas(offsetX, offsetY);
+    }
+    
+    // Only update if we have new bits and matrix is not complete
+    if (currentBitCount <= this.lastBitCount || this.isMatrixComplete) return;
+    
+    // Calculate how many new bits to process (adaptive chunk size)
+    const chunkSize = this.calculateOptimalChunkSize();
+    const newBitsCount = Math.min(currentBitCount - this.lastBitCount, chunkSize);
+    const startBitIndex = this.lastBitCount;
+    const endBitIndex = Math.min(startBitIndex + newBitsCount, maxMatrixBits);
+    
+    // Batch update pixels using ImageData
+    this.updatePixelsBatch(bits, startBitIndex, endBitIndex, offsetX, offsetY);
+    
+    // Update last bit count
+    this.lastBitCount = Math.min(endBitIndex, currentBitCount);
+    
+    // Check if matrix is now complete
+    if (this.lastBitCount >= maxMatrixBits) {
+      this.isMatrixComplete = true;
+      this.addCompletionIndicator(offsetX, offsetY);
+    }
+    
+    // Update performance metrics
+    this.updatePerformanceMetrics(startTime);
+  }
+
+  /**
+   * Initialize ImageData with white background
+   */
+  initializeImageData() {
+    const data = this.imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 255;     // R
+      data[i + 1] = 255; // G
+      data[i + 2] = 255; // B
+      data[i + 3] = 255; // A
+    }
+  }
+
+  /**
+   * Initialize canvas with background and border
+   */
+  initializeCanvas(offsetX, offsetY) {
+    this.bitMatrixCtx.clearRect(0, 0, this.bitMatrixCanvas.width, this.bitMatrixCanvas.height);
+    
+    // Draw background (white)
+    this.bitMatrixCtx.fillStyle = "#ffffff";
+    this.bitMatrixCtx.fillRect(offsetX, offsetY, this.canvasWidth, this.canvasHeight);
+    
+    // Draw border
+    this.bitMatrixCtx.strokeStyle = "#000000";
+    this.bitMatrixCtx.lineWidth = 1;
+    this.bitMatrixCtx.strokeRect(offsetX, offsetY, this.canvasWidth, this.canvasHeight);
+  }
+
+  /**
+   * Perform full refresh with optimized clearing
+   */
+  performFullRefresh(offsetX, offsetY) {
+    this.refreshCycle++;
+    this.isMatrixComplete = false;
+    this.lastBitCount = 0;
+    
+    // Clear canvas
+    this.bitMatrixCtx.clearRect(0, 0, this.bitMatrixCanvas.width, this.bitMatrixCanvas.height);
+    
+    // Reset ImageData
+    this.initializeImageData();
+    
+    // Draw background and border
+    this.initializeCanvas(offsetX, offsetY);
+    
+    // Reset matrix data
+    this.bitMatrixData.fill(0);
+    
+    // Add refresh indicator
+    this.bitMatrixCtx.fillStyle = "#ff6b6b";
+    this.bitMatrixCtx.font = "12px Arial";
+    this.bitMatrixCtx.fillText(`Refresh #${this.refreshCycle}`, offsetX + 5, offsetY + 15);
+  }
+
+  /**
+   * Calculate optimal chunk size based on performance
+   */
+  calculateOptimalChunkSize() {
+    const baseChunkSize = 2000;
+    if (!this.adaptiveInterval) return baseChunkSize;
+    
+    // Adjust chunk size based on average update time
+    if (this.performanceMetrics.averageUpdateTime > 16) { // > 16ms
+      return Math.max(500, baseChunkSize * 0.5);
+    } else if (this.performanceMetrics.averageUpdateTime < 8) { // < 8ms
+      return Math.min(5000, baseChunkSize * 1.5);
+    }
+    return baseChunkSize;
+  }
+
+  /**
+   * Batch update pixels using ImageData for better performance
+   */
+  updatePixelsBatch(bits, startBitIndex, endBitIndex, offsetX, offsetY) {
+    const data = this.imageData.data;
+    let hasChanges = false;
+    
+    for (let bitIndex = startBitIndex; bitIndex < endBitIndex; bitIndex++) {
+      const row = Math.floor(bitIndex / this.matrixWidth);
+      const col = bitIndex % this.matrixWidth;
+      
+      const bitValue = bitIndex < bits.length ? bits[bitIndex] : 0;
+      const dataIndex = row * this.matrixWidth + col;
+      
+      // Only update if the bit value changed
+      if (this.bitMatrixData[dataIndex] !== bitValue) {
+        this.bitMatrixData[dataIndex] = bitValue;
+        hasChanges = true;
+        
+        // Update ImageData for 2x2 pixel square
+        const pixelValue = bitValue === 1 ? 0 : 255;
+        const imageX = col * this.pixelSize;
+        const imageY = row * this.pixelSize;
+        
+        for (let py = 0; py < this.pixelSize; py++) {
+          for (let px = 0; px < this.pixelSize; px++) {
+            const pixelIndex = ((imageY + py) * this.canvasWidth + (imageX + px)) * 4;
+            if (pixelIndex < data.length) {
+              data[pixelIndex] = pixelValue;     // R
+              data[pixelIndex + 1] = pixelValue; // G
+              data[pixelIndex + 2] = pixelValue; // B
+              data[pixelIndex + 3] = 255;        // A
+            }
+          }
+        }
+      }
+    }
+    
+    // Only putImageData if there were changes
+    if (hasChanges) {
+      this.bitMatrixCtx.putImageData(this.imageData, offsetX, offsetY);
+    }
+  }
+
+  /**
+   * Add completion indicator
+   */
+  addCompletionIndicator(offsetX, offsetY) {
+    this.bitMatrixCtx.fillStyle = "#4caf50";
+    this.bitMatrixCtx.font = "12px Arial";
+    this.bitMatrixCtx.fillText("Complete!", offsetX + this.canvasWidth - 60, offsetY + 15);
+  }
+
+  /**
+   * Update performance metrics for adaptive optimization
+   */
+  updatePerformanceMetrics(startTime) {
+    const updateTime = performance.now() - startTime;
+    this.performanceMetrics.updateCount++;
+    this.performanceMetrics.averageUpdateTime = 
+      (this.performanceMetrics.averageUpdateTime * (this.performanceMetrics.updateCount - 1) + updateTime) / 
+      this.performanceMetrics.updateCount;
+    
+    // Adjust update interval based on performance
+    if (this.adaptiveInterval) {
+      if (this.performanceMetrics.averageUpdateTime > 20) {
+        this.updateInterval = Math.min(200, this.updateInterval + 10);
+      } else if (this.performanceMetrics.averageUpdateTime < 5) {
+        this.updateInterval = Math.max(30, this.updateInterval - 5);
+      }
+    }
+  }
+
+  /**
+   * Draw grid lines for the bit matrix (only when needed)
+   */
+  drawGridLines(offsetX, offsetY) {
+    this.bitMatrixCtx.strokeStyle = "#cccccc";
+    this.bitMatrixCtx.lineWidth = 0.5;
+    
+    // Vertical grid lines
+    for (let i = 0; i <= this.matrixWidth; i += 10) {
+      const x = offsetX + i * this.pixelSize;
+      this.bitMatrixCtx.beginPath();
+      this.bitMatrixCtx.moveTo(x, offsetY);
+      this.bitMatrixCtx.lineTo(x, offsetY + this.canvasHeight);
+      this.bitMatrixCtx.stroke();
+    }
+    
+    // Horizontal grid lines
+    for (let i = 0; i <= this.matrixHeight; i += 10) {
+      const y = offsetY + i * this.pixelSize;
+      this.bitMatrixCtx.beginPath();
+      this.bitMatrixCtx.moveTo(offsetX, y);
+      this.bitMatrixCtx.lineTo(offsetX + this.canvasWidth, y);
+      this.bitMatrixCtx.stroke();
+    }
+  }
+
+  /**
+   * Reset the bit matrix (call when starting new generation)
+   */
+  resetBitMatrix() {
+    // Update canvas size to match current matrix dimensions
+    this.updateCanvasSize();
+    
+    // Reset matrix data with current dimensions
+    this.bitMatrixData = new Array(this.matrixWidth * this.matrixHeight).fill(0);
+    this.lastBitCount = 0;
+    this.isMatrixComplete = false;
+    this.refreshCycle = 0;
+    this.imageData = null; // Reset ImageData
+    this.performanceMetrics = {
+      lastUpdateTime: 0,
+      updateCount: 0,
+      averageUpdateTime: 0
+    };
+    this.updateInterval = 50; // Reset to default interval
+    if (this.bitMatrixCanvas && this.bitMatrixCtx) {
+      this.bitMatrixCtx.clearRect(0, 0, this.bitMatrixCanvas.width, this.bitMatrixCanvas.height);
+    }
   }
 }
 
@@ -336,6 +664,7 @@ class AudioRNG {
 
             // Update visualization
             this.visualizationManager.drawHistogram(this.uintArray);
+            this.visualizationManager.drawBitMatrix(this.uintArray);
 
             // Update file generator progress if it's waiting for data
             if (this.fileGenerator && this.fileGenerator.isGenerating) {
@@ -417,6 +746,10 @@ class AudioRNG {
 
       this.stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.setupAudioContext();
+      
+      // Reset bit matrix for new generation
+      this.visualizationManager.resetBitMatrix();
+      
       this.drawLoop();
       
       // Update UI
