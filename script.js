@@ -174,9 +174,10 @@ class AudioRNG {
     this.collectedNumbers = [];
     this.uintArray = [];
     
-    // Visualization and password generator
+    // Visualization and generators
     this.visualizationManager = new VisualizationManager();
     this.passwordGenerator = new PasswordGenerator();
+    this.fileGenerator = null; // Will be set during initialization
     
     // Animation frame ID for cleanup
     this.animationFrameId = null;
@@ -335,6 +336,11 @@ class AudioRNG {
 
             // Update visualization
             this.visualizationManager.drawHistogram(this.uintArray);
+
+            // Update file generator progress if it's waiting for data
+            if (this.fileGenerator && this.fileGenerator.isGenerating) {
+              this.fileGenerator.updateProgress(this.uintArray);
+            }
           }
         }
       }
@@ -461,6 +467,17 @@ class AudioRNG {
     this.levelText.textContent = 'Level: 0%';
     this.compactLevelBar.style.setProperty('--level', '0%');
     this.compactLevelText.textContent = '0%';
+    
+    // Reset file generator state
+    if (this.fileGenerator) {
+      this.fileGenerator.isGenerating = false;
+      this.fileGenerator.requiredDataSize = 0;
+      this.fileGenerator.genFileBtn.disabled = false;
+      this.fileGenerator.genFileBtn.textContent = "Generate Random File";
+      this.fileGenerator.downloadFileBtn.disabled = true;
+      this.fileGenerator.fileInfoEl.textContent = "Start RNG to begin collecting random data for file generation.";
+      this.fileGenerator.fileInfoEl.className = "file-info";
+    }
   }
 
   /**
@@ -473,14 +490,296 @@ class AudioRNG {
 }
 
 // ============================================================================
+// FILE GENERATOR CLASS
+// ============================================================================
+
+class FileGenerator {
+  constructor() {
+    this.fileSizeEl = document.getElementById("fileSize");
+    this.fileNameEl = document.getElementById("fileName");
+    this.genFileBtn = document.getElementById("genFileBtn");
+    this.downloadFileBtn = document.getElementById("downloadFileBtn");
+    this.fileInfoEl = document.getElementById("fileInfo");
+    this.generatedFile = null;
+    this.isGenerating = false;
+    this.requiredDataSize = 0;
+    
+    // Set initial message
+    this.fileInfoEl.textContent = "Start RNG to begin collecting random data for file generation.";
+    this.fileInfoEl.className = "file-info";
+  }
+
+  /**
+   * Generates a random file using the provided random data
+   * @param {number[]} uintArray - Array of random uint8 values
+   */
+  generateFile(uintArray) {
+    const fileSize = Math.max(1, Math.min(10485760, parseInt(this.fileSizeEl.value) || 1024));
+    const fileName = this.fileNameEl.value || "random_data.bin";
+    
+    // Check if we have enough data for the requested file size
+    if (uintArray.length < fileSize) {
+      this.requiredDataSize = fileSize;
+      this.isGenerating = true;
+      this.genFileBtn.disabled = true;
+      this.genFileBtn.textContent = "Collecting Data...";
+      
+      this.fileInfoEl.innerHTML = `
+        <strong>Collecting Random Data...</strong><br>
+        Required: ${fileSize} bytes (${(fileSize / 1024).toFixed(2)} KB)<br>
+        Collected: ${uintArray.length} bytes (${(uintArray.length / 1024).toFixed(2)} KB)<br>
+        Progress: ${((uintArray.length / fileSize) * 100).toFixed(1)}%<br>
+        <div style="background: #333; height: 8px; border-radius: 4px; margin-top: 8px;">
+          <div style="background: #4caf50; height: 100%; width: ${(uintArray.length / fileSize) * 100}%; border-radius: 4px; transition: width 0.3s ease;"></div>
+        </div>
+      `;
+      this.fileInfoEl.className = "file-info";
+      this.downloadFileBtn.disabled = true;
+      return;
+    }
+
+    // We have enough data, generate the file
+    this.createFileFromData(uintArray, fileSize, fileName);
+  }
+
+  /**
+   * Creates the actual file from the collected data
+   * @param {number[]} uintArray - Array of random uint8 values
+   * @param {number} fileSize - Size of file to create
+   * @param {string} fileName - Name of the file
+   */
+  createFileFromData(uintArray, fileSize, fileName) {
+    // Use only the exact amount of data needed (no repetition)
+    const fileData = new Uint8Array(fileSize);
+    for (let i = 0; i < fileSize; i++) {
+      fileData[i] = uintArray[i];
+    }
+
+    // Create a Blob and store it
+    this.generatedFile = new Blob([fileData], { type: 'application/octet-stream' });
+    
+    // Update UI
+    this.fileInfoEl.innerHTML = `
+      <strong>File Generated Successfully!</strong><br>
+      Size: ${fileSize} bytes (${(fileSize / 1024).toFixed(2)} KB)<br>
+      Name: ${fileName}<br>
+      Data Source: ${fileSize} bytes of cryptographically secure random data<br>
+      Ready for download.
+    `;
+    this.fileInfoEl.className = "file-info";
+    this.downloadFileBtn.disabled = false;
+    this.genFileBtn.disabled = false;
+    this.genFileBtn.textContent = "Generate Random File";
+    this.isGenerating = false;
+  }
+
+  /**
+   * Updates the progress display during data collection
+   * @param {number[]} uintArray - Current array of random uint8 values
+   */
+  updateProgress(uintArray) {
+    if (!this.isGenerating || this.requiredDataSize === 0) return;
+
+    const progress = (uintArray.length / this.requiredDataSize) * 100;
+    
+    this.fileInfoEl.innerHTML = `
+      <strong>Collecting Random Data...</strong><br>
+      Required: ${this.requiredDataSize} bytes (${(this.requiredDataSize / 1024).toFixed(2)} KB)<br>
+      Collected: ${uintArray.length} bytes (${(uintArray.length / 1024).toFixed(2)} KB)<br>
+      Progress: ${progress.toFixed(1)}%<br>
+      <div style="background: #333; height: 8px; border-radius: 4px; margin-top: 8px;">
+        <div style="background: #4caf50; height: 100%; width: ${Math.min(100, progress)}%; border-radius: 4px; transition: width 0.3s ease;"></div>
+      </div>
+    `;
+
+    // Check if we now have enough data
+    if (uintArray.length >= this.requiredDataSize) {
+      this.createFileFromData(uintArray, this.requiredDataSize, this.fileNameEl.value || "random_data.bin");
+    }
+  }
+
+  /**
+   * Downloads the generated file
+   */
+  downloadFile() {
+    if (!this.generatedFile) return;
+
+    const fileName = this.fileNameEl.value || "random_data.bin";
+    const url = URL.createObjectURL(this.generatedFile);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+}
+
+// ============================================================================
+// RANDOM NUMBER GENERATOR CLASS
+// ============================================================================
+
+class RandomNumberGenerator {
+  constructor() {
+    this.numCountEl = document.getElementById("numCount");
+    this.numMinEl = document.getElementById("numMin");
+    this.numMaxEl = document.getElementById("numMax");
+    this.numHexEl = document.getElementById("numHex");
+    this.numDecimalEl = document.getElementById("numDecimal");
+    this.numBinaryEl = document.getElementById("numBinary");
+    this.numbersBoxEl = document.getElementById("numbersBox");
+    this.copyNumbersBtn = document.getElementById("copyNumbersBtn");
+  }
+
+  /**
+   * Gets the currently selected number format
+   * @returns {string} The selected format ('hex', 'decimal', or 'binary')
+   */
+  getSelectedFormat() {
+    if (this.numHexEl.checked) return 'hex';
+    if (this.numDecimalEl.checked) return 'decimal';
+    if (this.numBinaryEl.checked) return 'binary';
+    return 'hex'; // Default fallback
+  }
+
+  /**
+   * Generates random numbers using the provided random data
+   * @param {number[]} uintArray - Array of random uint8 values
+   */
+  generateNumbers(uintArray) {
+    if (uintArray.length < 32) {
+      this.numbersBoxEl.value = "Not enough random data yet. Wait for hashing...";
+      this.copyNumbersBtn.disabled = true;
+      return;
+    }
+
+    const count = Math.max(1, Math.min(10000, parseInt(this.numCountEl.value) || 100));
+    const min = parseInt(this.numMinEl.value) || 0;
+    const max = parseInt(this.numMaxEl.value) || 255;
+    
+    if (min >= max) {
+      this.numbersBoxEl.value = "Error: Min value must be less than max value.";
+      this.copyNumbersBtn.disabled = true;
+      return;
+    }
+
+    const numbers = [];
+    for (let i = 0; i < count; i++) {
+      const randomValue = uintArray[i % uintArray.length];
+      const scaledValue = min + (randomValue % (max - min + 1));
+      numbers.push(scaledValue);
+    }
+
+    // Format numbers based on selected format
+    const format = this.getSelectedFormat();
+    let formattedNumbers = [];
+    
+    switch (format) {
+      case 'hex':
+        formattedNumbers = numbers.map(n => "0x" + n.toString(16).toUpperCase().padStart(2, "0"));
+        break;
+      case 'decimal':
+        formattedNumbers = numbers.map(n => n.toString());
+        break;
+      case 'binary':
+        formattedNumbers = numbers.map(n => "0b" + n.toString(2).padStart(8, "0"));
+        break;
+      default:
+        formattedNumbers = numbers.map(n => "0x" + n.toString(16).toUpperCase().padStart(2, "0"));
+    }
+
+    this.numbersBoxEl.value = formattedNumbers.join(", ");
+    this.copyNumbersBtn.disabled = false;
+  }
+
+  /**
+   * Copies the generated numbers to clipboard
+   */
+  copyToClipboard() {
+    this.numbersBoxEl.select();
+    document.execCommand('copy');
+    
+    // Visual feedback
+    const originalText = this.copyNumbersBtn.textContent;
+    this.copyNumbersBtn.textContent = "Copied!";
+    this.copyNumbersBtn.style.background = "#4caf50";
+    
+    setTimeout(() => {
+      this.copyNumbersBtn.textContent = originalText;
+      this.copyNumbersBtn.style.background = "";
+    }, 2000);
+  }
+}
+
+// ============================================================================
+// TAB MANAGER CLASS
+// ============================================================================
+
+class TabManager {
+  constructor() {
+    this.tabButtons = document.querySelectorAll('.tab-button');
+    this.tabPanels = document.querySelectorAll('.tab-panel');
+    
+    this.initializeTabs();
+  }
+
+  initializeTabs() {
+    this.tabButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        const targetTab = button.getAttribute('data-tab');
+        this.switchTab(targetTab);
+      });
+    });
+  }
+
+  switchTab(tabName) {
+    // Remove active class from all buttons and panels
+    this.tabButtons.forEach(btn => btn.classList.remove('active'));
+    this.tabPanels.forEach(panel => panel.classList.remove('active'));
+
+    // Add active class to clicked button and corresponding panel
+    const activeButton = document.querySelector(`[data-tab="${tabName}"]`);
+    const activePanel = document.getElementById(`${tabName}-tab`);
+    
+    if (activeButton && activePanel) {
+      activeButton.classList.add('active');
+      activePanel.classList.add('active');
+    }
+  }
+}
+
+// ============================================================================
 // APPLICATION INITIALIZATION
 // ============================================================================
 
 // Create the main RNG instance
 const audioRNG = new AudioRNG();
 const passwordGenerator = audioRNG.passwordGenerator;
+const fileGenerator = new FileGenerator();
+const randomNumberGenerator = new RandomNumberGenerator();
+const tabManager = new TabManager();
 
-// Set up event listeners (only for password generation)
+// Set the file generator reference in AudioRNG for progress updates
+audioRNG.fileGenerator = fileGenerator;
+
+// Set up event listeners
 document.getElementById("genPwBtn").onclick = () => {
   passwordGenerator.generatePassword(audioRNG.getRandomData());
+};
+
+document.getElementById("genFileBtn").onclick = () => {
+  fileGenerator.generateFile(audioRNG.getRandomData());
+};
+
+document.getElementById("downloadFileBtn").onclick = () => {
+  fileGenerator.downloadFile();
+};
+
+document.getElementById("genNumbersBtn").onclick = () => {
+  randomNumberGenerator.generateNumbers(audioRNG.getRandomData());
+};
+
+document.getElementById("copyNumbersBtn").onclick = () => {
+  randomNumberGenerator.copyToClipboard();
 };

@@ -17,7 +17,6 @@ body {
 .app-bar {
   background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
   padding: 1rem 2rem;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -30,7 +29,6 @@ body {
   font-size: 1.5rem;
   font-weight: 600;
   color: white;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .level-meter-container {
@@ -118,19 +116,16 @@ button {
   font-size: 1rem;
   font-weight: 600;
   transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
 }
 
 button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+  opacity: 0.9;
 }
 
 button:disabled {
   background: #666;
   cursor: not-allowed;
   transform: none;
-  box-shadow: none;
 }
 
 /* Canvas */
@@ -140,7 +135,6 @@ canvas {
   background: #1a1a1a;
   border-radius: 8px;
   border: 2px solid #333;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
 }
 
 /* Form Elements */
@@ -216,7 +210,6 @@ input[type="checkbox"] {
   background: #4caf50;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .gain-slider::-moz-range-thumb {
@@ -226,7 +219,6 @@ input[type="checkbox"] {
   border-radius: 50%;
   cursor: pointer;
   border: none;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 #gainValue {
@@ -351,7 +343,6 @@ textarea {
   word-break: break-all;
   background: #1a1a1a;
   padding: 1rem;
-  border-radius: 8px;
   border: 2px solid #333;
   margin: 1rem 0;
 }
@@ -359,7 +350,6 @@ textarea {
 #hashOutput {
   background: #1a1a1a;
   padding: 1rem;
-  border-radius: 8px;
   border: 2px solid #333;
   margin: 1rem 0;
   font-family: monospace;
@@ -439,4 +429,157 @@ textarea {
   .visualization-item {
     min-width: 100%;
   }
+
+  .tab-navigation {
+    flex-direction: column;
+    border-bottom: none;
+    border-left: 1px solid #333;
+  }
+
+  .tab-button {
+    font-size: 0.8rem;
+    padding: 0.75rem 1rem;
+    border-bottom: none;
+    border-left: 2px solid transparent;
+    border-radius: 0;
+    text-align: left;
+  }
+
+  .tab-button.active {
+    border-bottom-color: transparent;
+    border-left-color: #4caf50;
+    border-radius: 0;
+  }
+
+  .tab-content {
+    padding: 1rem 0;
+  }
+}
+
+/* Tab Interface */
+.tab-navigation {
+  display: flex;
+  background: transparent;
+  border-bottom: 1px solid #333;
+  margin-bottom: 1.5rem;
+  gap: 0;
+}
+
+.tab-button {
+  flex: 1;
+  padding: 1rem 1.5rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: #888;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.tab-button:hover {
+  color: #ccc;
+}
+
+.tab-button.active {
+  color: #4caf50;
+  border-bottom-color: #4caf50;
+  border-radius: 0;
+}
+
+.tab-content {
+  position: relative;
+  background: transparent;
+  padding: 1.5rem 0;
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+/* File Info */
+.file-info {
+  background: rgba(76, 175, 80, 0.1);
+  border: 1px solid #4caf50;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  color: #4caf50;
+  font-size: 0.9rem;
+}
+
+.file-info.hidden {
+  display: none;
+}
+
+/* Radio Button Styling */
+input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #666;
+  border-radius: 50%;
+  background: transparent;
+  margin-right: 8px;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+input[type="radio"]:hover {
+  border-color: #4caf50;
+}
+
+input[type="radio"]:checked {
+  border-color: #4caf50;
+  background: #4caf50;
+}
+
+input[type="radio"]:checked::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: white;
+}
+
+/* Radio Button Labels */
+label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+  color: #ccc;
+  transition: color 0.3s ease;
+}
+
+label:hover {
+  color: #fff;
+}
+
+label:has(input[type="radio"]:checked) {
+  color: #4caf50;
+  font-weight: 500;
+}
+
+/* Radio Button Group Styling */
+.form-row:has(input[type="radio"]) {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
