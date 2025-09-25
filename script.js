@@ -1,34 +1,18 @@
+"use strict";
+
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
-
-/**
- * Packs 8 bits into a single byte
- * @param {number[]} bits - Array of bits (0s and 1s)
- * @returns {number} The resulting byte value
- */
 function bitsToUint8(bits) {
   let value = 0;
-  for (let i = 0; i < bits.length; i++) {
-    value = (value << 1) | bits[i];
-  }
+  for (let i = 0; i < bits.length; i++) value = (value << 1) | bits[i];
   return value;
 }
 
-/**
- * Converts a buffer to a hexadecimal string
- * @param {Uint8Array} buffer - The buffer to convert
- * @returns {string} Hexadecimal representation
- */
 function buf2hex(buffer) {
   return [...buffer].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Generates SHA-256 hash of a string
- * @param {string} str - String to hash
- * @returns {Promise<Uint8Array>} The hash as a Uint8Array
- */
 async function sha256String(str) {
   const encoder = new TextEncoder();
   const data = encoder.encode(str);
@@ -37,64 +21,95 @@ async function sha256String(str) {
 }
 
 // ============================================================================
-// VISUALIZATION MANAGER CLASS
+// VISUALIZATION MANAGER (now with WATERFALL mode)
 // ============================================================================
-
 class VisualizationManager {
   constructor() {
-    this.waveformCanvas = document.getElementById("waveform");
-    this.waveCtx = this.waveformCanvas.getContext("2d");
-    this.histCanvas = document.getElementById("histogram");
-    this.histCtx = this.histCanvas.getContext("2d");
-    this.bitMatrixCanvas = document.getElementById("bitMatrix");
-    this.bitMatrixCtx = this.bitMatrixCanvas.getContext("2d");
-    
-    // Bit matrix optimization properties
-    this.matrixWidth = 200;
-    this.matrixHeight = 100;
-    this.pixelSize = 2;
+    // Optional canvases (guards included)
+    this.waveformCanvas = document.getElementById("waveform") || null;
+    this.waveCtx = this.waveformCanvas ? this.waveformCanvas.getContext("2d") : null;
+
+    this.histCanvas = document.getElementById("histogram") || null;
+    this.histCtx = this.histCanvas ? this.histCanvas.getContext("2d") : null;
+
+    this.bitMatrixCanvas = document.getElementById("bitMatrix") || null;
+    this.bitMatrixCtx = this.bitMatrixCanvas ? this.bitMatrixCanvas.getContext("2d") : null;
+
+    // Geometry
+    this.matrixWidth = 200;  // columns (bits per row)
+    this.matrixHeight = 100; // rows
+    this.pixelSize = 2;      // on-screen scale
+
+    // Rendering mode: "waterfall" | "grid"
+    this.renderMode = "waterfall";
+    this.newestOnTop = true; // waterfall direction: true => new row at top
+
+    // Visible size
     this.canvasWidth = this.matrixWidth * this.pixelSize;
     this.canvasHeight = this.matrixHeight * this.pixelSize;
-    this.bitMatrixData = new Array(this.matrixWidth * this.matrixHeight).fill(0);
-    this.lastBitCount = 0;
-    this.updateThrottle = 0;
-    this.updateInterval = 50; // Reduced to 50ms for better responsiveness
-    this.showGrid = false; // Disable grid by default for better performance
-    this.refreshCycle = 0; // Track refresh cycles
-    this.isMatrixComplete = false; // Track if matrix is fully loaded
-    
-    // Performance optimization properties
-    this.imageData = null; // For direct pixel manipulation
-    this.pendingUpdates = []; // Batch updates for better performance
-    this.animationFrameId = null; // Track animation frame
-    this.performanceMetrics = {
-      lastUpdateTime: 0,
-      updateCount: 0,
-      averageUpdateTime: 0
-    };
-    this.adaptiveInterval = true; // Enable adaptive update frequency
-    
-    // Set initial canvas size based on matrix dimensions
+
+    // Offscreen buffer (1:1 logical pixels)
+    this.offscreen = document.createElement("canvas");
+    this.offscreen.width = this.matrixWidth;
+    this.offscreen.height = this.matrixHeight;
+    this.offctx = this.offscreen.getContext("2d", { willReadFrequently: true });
+
+    // Row buffer for fast line injection
+    this.rowImage = this.offctx.createImageData(this.matrixWidth, 1);
+
+    // Colors (binary palette)
+    this.colorZero = [255, 255, 255]; // 0-bit -> white
+    this.colorOne  = [0, 0, 0];       // 1-bit -> black
+
+    // State for bit streaming
+    this.lastBitCount = 0;     // total bits consumed so far
+    this.capacity = this.matrixWidth * this.matrixHeight;
+    this.rowAccumulator = [];   // collect bits until a full row is ready
+
+    // Optional grid overlay
+    this.showGrid = false;
+
+    // Init canvases
     this.updateCanvasSize();
+    this._clearOffscreenToWhite();
+
+    if (this.bitMatrixCanvas) this.bitMatrixCanvas.style.imageRendering = "pixelated";
   }
 
-  /**
-   * Update canvas size to match matrix dimensions
-   */
+  // --- Public toggles ---
+  setWaterfallDirection(dir /* "down" | "up" */) {
+    this.newestOnTop = dir === "down"; // SDR "waterfall down" => newest at top, scroll down
+  }
+  setWaterfallColors(rgbZero, rgbOne) {
+    if (Array.isArray(rgbZero) && rgbZero.length === 3) this.colorZero = rgbZero.slice(0,3);
+    if (Array.isArray(rgbOne) && rgbOne.length === 3) this.colorOne  = rgbOne.slice(0,3);
+  }
+  setRenderMode(mode /* "waterfall" | "grid" */) {
+    this.renderMode = mode === "grid" ? "grid" : "waterfall";
+    this.resetBitMatrix();
+  }
+
+  // --- Canvas sizing ---
   updateCanvasSize() {
-    if (this.bitMatrixCanvas) {
-      this.bitMatrixCanvas.width = this.canvasWidth;
-      this.bitMatrixCanvas.height = this.canvasHeight;
-    }
+    if (!this.bitMatrixCanvas) return;
+    this.bitMatrixCanvas.width = this.canvasWidth;
+    this.bitMatrixCanvas.height = this.canvasHeight;
+    if (this.bitMatrixCtx) this.bitMatrixCtx.imageSmoothingEnabled = false;
   }
 
-  /**
-   * Draws histogram of all collected uint8 values
-   * @param {number[]} uintArray - Array of uint8 values to visualize
-   */
+  // --- Clearing ---
+  _clearOffscreenToWhite() {
+    this.offctx.save();
+    this.offctx.fillStyle = "#ffffff";
+    this.offctx.fillRect(0, 0, this.matrixWidth, this.matrixHeight);
+    this.offctx.restore();
+  }
+
+  // --- Histogram ---
   drawHistogram(uintArray) {
+    if (!this.histCtx || !this.histCanvas) return;
     const histogram = new Array(256).fill(0);
-    uintArray.forEach(v => histogram[v]++);
+    for (let i = 0; i < uintArray.length; i++) histogram[uintArray[i]]++;
 
     this.histCtx.clearRect(0, 0, this.histCanvas.width, this.histCanvas.height);
     const maxCount = Math.max(...histogram);
@@ -108,320 +123,209 @@ class VisualizationManager {
     }
   }
 
-  /**
-   * Draws the audio waveform
-   * @param {Uint8Array} data - Audio data to visualize
-   */
+  // --- Waveform ---
   drawWaveform(data) {
-    this.waveCtx.clearRect(0, 0, this.waveformCanvas.width, this.waveformCanvas.height);
+    if (!this.waveCtx || !this.waveformCanvas) return;
+    const w = this.waveformCanvas.width;
+    const h = this.waveformCanvas.height;
+    this.waveCtx.clearRect(0, 0, w, h);
     this.waveCtx.beginPath();
     this.waveCtx.strokeStyle = "#0f0";
     this.waveCtx.lineWidth = 2;
-    
-    for (let x = 0; x < data.length; x++) {
-      const y = (data[x] / 255) * this.waveformCanvas.height;
-      if (x === 0) {
-        this.waveCtx.moveTo(x, y);
-      } else {
-        this.waveCtx.lineTo((x / data.length) * this.waveformCanvas.width, y);
-      }
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / (data.length - 1)) * w;
+      const y = (data[i] / 255) * h;
+      if (i === 0) this.waveCtx.moveTo(x, y);
+      else this.waveCtx.lineTo(x, y);
     }
     this.waveCtx.stroke();
   }
 
-  /**
-   * Optimized bit conversion using bitwise operations and pre-allocated array
-   * @param {number[]} uintArray - Array of uint8 values
-   * @returns {number[]} Array of bits (0s and 1s)
-   */
-  uint8ArrayToBits(uintArray) {
-    const totalBits = uintArray.length * 8;
-    const bits = new Array(totalBits);
-    
-    for (let i = 0; i < uintArray.length; i++) {
-      const byte = uintArray[i];
-      const baseIndex = i * 8;
-      
-      // Unroll the bit extraction loop for better performance
-      bits[baseIndex] = (byte >> 7) & 1;
-      bits[baseIndex + 1] = (byte >> 6) & 1;
-      bits[baseIndex + 2] = (byte >> 5) & 1;
-      bits[baseIndex + 3] = (byte >> 4) & 1;
-      bits[baseIndex + 4] = (byte >> 3) & 1;
-      bits[baseIndex + 5] = (byte >> 2) & 1;
-      bits[baseIndex + 6] = (byte >> 1) & 1;
-      bits[baseIndex + 7] = byte & 1;
-    }
-    
-    return bits;
-  }
-
-  /**
-   * High-performance Bit Matrix Plot with ImageData optimization
-   * @param {number[]} uintArray - Array of uint8 values to visualize as bits
-   */
+  // --- Main draw entry ---
   drawBitMatrix(uintArray) {
+    if (this.renderMode === "waterfall") this._drawBitWaterfall(uintArray);
+    else this._drawBitGrid(uintArray); // optional fallback
+  }
+
+  // --- WATERFALL RENDERING ---
+  _drawBitWaterfall(uintArray) {
     if (!this.bitMatrixCanvas || !this.bitMatrixCtx) return;
-    
-    const startTime = performance.now();
-    
-    // Adaptive throttling based on performance
-    const now = Date.now();
-    if (this.adaptiveInterval && now - this.updateThrottle < this.updateInterval) {
-      return;
-    }
-    this.updateThrottle = now;
-    
-    // Convert uint8 array to bits
-    const bits = this.uint8ArrayToBits(uintArray);
-    const currentBitCount = bits.length;
-    const maxMatrixBits = this.matrixWidth * this.matrixHeight;
-    
-    // Calculate canvas offsets
-    const offsetX = (this.bitMatrixCanvas.width - this.canvasWidth) / 2;
-    const offsetY = (this.bitMatrixCanvas.height - this.canvasHeight) / 2;
-    
-    // Initialize ImageData for direct pixel manipulation
-    if (!this.imageData) {
-      this.imageData = this.bitMatrixCtx.createImageData(this.canvasWidth, this.canvasHeight);
-      this.initializeImageData();
-    }
-    
-    // Check if matrix is complete and needs full refresh
-    if (this.lastBitCount >= maxMatrixBits && currentBitCount > maxMatrixBits) {
-      this.performFullRefresh(offsetX, offsetY);
-      return;
-    }
-    
-    // Initialize canvas only once
-    if (this.lastBitCount === 0 && !this.isMatrixComplete) {
-      this.initializeCanvas(offsetX, offsetY);
-    }
-    
-    // Only update if we have new bits and matrix is not complete
-    if (currentBitCount <= this.lastBitCount || this.isMatrixComplete) return;
-    
-    // Calculate how many new bits to process (adaptive chunk size)
-    const chunkSize = this.calculateOptimalChunkSize();
-    const newBitsCount = Math.min(currentBitCount - this.lastBitCount, chunkSize);
-    const startBitIndex = this.lastBitCount;
-    const endBitIndex = Math.min(startBitIndex + newBitsCount, maxMatrixBits);
-    
-    // Batch update pixels using ImageData
-    this.updatePixelsBatch(bits, startBitIndex, endBitIndex, offsetX, offsetY);
-    
-    // Update last bit count
-    this.lastBitCount = Math.min(endBitIndex, currentBitCount);
-    
-    // Check if matrix is now complete
-    if (this.lastBitCount >= maxMatrixBits) {
-      this.isMatrixComplete = true;
-      this.addCompletionIndicator(offsetX, offsetY);
-    }
-    
-    // Update performance metrics
-    this.updatePerformanceMetrics(startTime);
-  }
 
-  /**
-   * Initialize ImageData with white background
-   */
-  initializeImageData() {
-    const data = this.imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-      data[i] = 255;     // R
-      data[i + 1] = 255; // G
-      data[i + 2] = 255; // B
-      data[i + 3] = 255; // A
-    }
-  }
+    const totalBits = uintArray.length * 8;
+    if (totalBits <= this.lastBitCount) return;
 
-  /**
-   * Initialize canvas with background and border
-   */
-  initializeCanvas(offsetX, offsetY) {
-    this.bitMatrixCtx.clearRect(0, 0, this.bitMatrixCanvas.width, this.bitMatrixCanvas.height);
-    
-    // Draw background (white)
-    this.bitMatrixCtx.fillStyle = "#ffffff";
-    this.bitMatrixCtx.fillRect(offsetX, offsetY, this.canvasWidth, this.canvasHeight);
-    
-    // Draw border
-    this.bitMatrixCtx.strokeStyle = "#000000";
-    this.bitMatrixCtx.lineWidth = 1;
-    this.bitMatrixCtx.strokeRect(offsetX, offsetY, this.canvasWidth, this.canvasHeight);
-  }
+    // Consume new bits → fill rows
+    const rowW = this.matrixWidth;
+    const rowData = this.rowImage.data;
 
-  /**
-   * Perform full refresh with optimized clearing
-   */
-  performFullRefresh(offsetX, offsetY) {
-    this.refreshCycle++;
-    this.isMatrixComplete = false;
-    this.lastBitCount = 0;
-    
-    // Clear canvas
-    this.bitMatrixCtx.clearRect(0, 0, this.bitMatrixCanvas.width, this.bitMatrixCanvas.height);
-    
-    // Reset ImageData
-    this.initializeImageData();
-    
-    // Draw background and border
-    this.initializeCanvas(offsetX, offsetY);
-    
-    // Reset matrix data
-    this.bitMatrixData.fill(0);
-    
-    // Add refresh indicator
-    this.bitMatrixCtx.fillStyle = "#ff6b6b";
-    this.bitMatrixCtx.font = "12px Arial";
-    this.bitMatrixCtx.fillText(`Refresh #${this.refreshCycle}`, offsetX + 5, offsetY + 15);
-  }
-
-  /**
-   * Calculate optimal chunk size based on performance
-   */
-  calculateOptimalChunkSize() {
-    const baseChunkSize = 2000;
-    if (!this.adaptiveInterval) return baseChunkSize;
-    
-    // Adjust chunk size based on average update time
-    if (this.performanceMetrics.averageUpdateTime > 16) { // > 16ms
-      return Math.max(500, baseChunkSize * 0.5);
-    } else if (this.performanceMetrics.averageUpdateTime < 8) { // < 8ms
-      return Math.min(5000, baseChunkSize * 1.5);
-    }
-    return baseChunkSize;
-  }
-
-  /**
-   * Batch update pixels using ImageData for better performance
-   */
-  updatePixelsBatch(bits, startBitIndex, endBitIndex, offsetX, offsetY) {
-    const data = this.imageData.data;
-    let hasChanges = false;
-    
-    for (let bitIndex = startBitIndex; bitIndex < endBitIndex; bitIndex++) {
-      const row = Math.floor(bitIndex / this.matrixWidth);
-      const col = bitIndex % this.matrixWidth;
-      
-      const bitValue = bitIndex < bits.length ? bits[bitIndex] : 0;
-      const dataIndex = row * this.matrixWidth + col;
-      
-      // Only update if the bit value changed
-      if (this.bitMatrixData[dataIndex] !== bitValue) {
-        this.bitMatrixData[dataIndex] = bitValue;
-        hasChanges = true;
-        
-        // Update ImageData for 2x2 pixel square
-        const pixelValue = bitValue === 1 ? 0 : 255;
-        const imageX = col * this.pixelSize;
-        const imageY = row * this.pixelSize;
-        
-        for (let py = 0; py < this.pixelSize; py++) {
-          for (let px = 0; px < this.pixelSize; px++) {
-            const pixelIndex = ((imageY + py) * this.canvasWidth + (imageX + px)) * 4;
-            if (pixelIndex < data.length) {
-              data[pixelIndex] = pixelValue;     // R
-              data[pixelIndex + 1] = pixelValue; // G
-              data[pixelIndex + 2] = pixelValue; // B
-              data[pixelIndex + 3] = 255;        // A
-            }
-          }
-        }
+    // Helper: commit one row to offscreen (scroll + draw)
+    const commitRow = (bitsRow /* length = rowW */) => {
+      // Fill row image pixels
+      for (let x = 0; x < rowW; x++) {
+        const b = bitsRow[x] ? this.colorOne : this.colorZero;
+        const idx = x * 4;
+        rowData[idx]     = b[0];
+        rowData[idx + 1] = b[1];
+        rowData[idx + 2] = b[2];
+        rowData[idx + 3] = 255;
       }
-    }
-    
-    // Only putImageData if there were changes
-    if (hasChanges) {
-      this.bitMatrixCtx.putImageData(this.imageData, offsetX, offsetY);
-    }
-  }
 
-  /**
-   * Add completion indicator
-   */
-  addCompletionIndicator(offsetX, offsetY) {
-    this.bitMatrixCtx.fillStyle = "#4caf50";
-    this.bitMatrixCtx.font = "12px Arial";
-    this.bitMatrixCtx.fillText("Complete!", offsetX + this.canvasWidth - 60, offsetY + 15);
-  }
-
-  /**
-   * Update performance metrics for adaptive optimization
-   */
-  updatePerformanceMetrics(startTime) {
-    const updateTime = performance.now() - startTime;
-    this.performanceMetrics.updateCount++;
-    this.performanceMetrics.averageUpdateTime = 
-      (this.performanceMetrics.averageUpdateTime * (this.performanceMetrics.updateCount - 1) + updateTime) / 
-      this.performanceMetrics.updateCount;
-    
-    // Adjust update interval based on performance
-    if (this.adaptiveInterval) {
-      if (this.performanceMetrics.averageUpdateTime > 20) {
-        this.updateInterval = Math.min(200, this.updateInterval + 10);
-      } else if (this.performanceMetrics.averageUpdateTime < 5) {
-        this.updateInterval = Math.max(30, this.updateInterval - 5);
+      if (this.newestOnTop) {
+        // Scroll down by 1 row: copy [0..H-2] → [1..H-1]
+        this.offctx.drawImage(
+          this.offscreen,
+          0, 0, this.matrixWidth, this.matrixHeight - 1,
+          0, 1, this.matrixWidth, this.matrixHeight - 1
+        );
+        // Put new row at top (y=0)
+        this.offctx.putImageData(this.rowImage, 0, 0);
+      } else {
+        // Newest at bottom: scroll up by 1 row
+        this.offctx.drawImage(
+          this.offscreen,
+          0, 1, this.matrixWidth, this.matrixHeight - 1,
+          0, 0, this.matrixWidth, this.matrixHeight - 1
+        );
+        // Put new row at bottom (y=H-1)
+        this.offctx.putImageData(this.rowImage, 0, this.matrixHeight - 1);
       }
-    }
-  }
-
-  /**
-   * Draw grid lines for the bit matrix (only when needed)
-   */
-  drawGridLines(offsetX, offsetY) {
-    this.bitMatrixCtx.strokeStyle = "#cccccc";
-    this.bitMatrixCtx.lineWidth = 0.5;
-    
-    // Vertical grid lines
-    for (let i = 0; i <= this.matrixWidth; i += 10) {
-      const x = offsetX + i * this.pixelSize;
-      this.bitMatrixCtx.beginPath();
-      this.bitMatrixCtx.moveTo(x, offsetY);
-      this.bitMatrixCtx.lineTo(x, offsetY + this.canvasHeight);
-      this.bitMatrixCtx.stroke();
-    }
-    
-    // Horizontal grid lines
-    for (let i = 0; i <= this.matrixHeight; i += 10) {
-      const y = offsetY + i * this.pixelSize;
-      this.bitMatrixCtx.beginPath();
-      this.bitMatrixCtx.moveTo(offsetX, y);
-      this.bitMatrixCtx.lineTo(offsetX + this.canvasWidth, y);
-      this.bitMatrixCtx.stroke();
-    }
-  }
-
-  /**
-   * Reset the bit matrix (call when starting new generation)
-   */
-  resetBitMatrix() {
-    // Update canvas size to match current matrix dimensions
-    this.updateCanvasSize();
-    
-    // Reset matrix data with current dimensions
-    this.bitMatrixData = new Array(this.matrixWidth * this.matrixHeight).fill(0);
-    this.lastBitCount = 0;
-    this.isMatrixComplete = false;
-    this.refreshCycle = 0;
-    this.imageData = null; // Reset ImageData
-    this.performanceMetrics = {
-      lastUpdateTime: 0,
-      updateCount: 0,
-      averageUpdateTime: 0
     };
-    this.updateInterval = 50; // Reset to default interval
-    if (this.bitMatrixCanvas && this.bitMatrixCtx) {
-      this.bitMatrixCtx.clearRect(0, 0, this.bitMatrixCanvas.width, this.bitMatrixCanvas.height);
+
+    // Pull bits from uintArray starting at lastBitCount
+    const pullBit = (bitIndex) => {
+      const byteIndex = bitIndex >> 3;
+      const bitIndexInByte = 7 - (bitIndex & 7);
+      return (uintArray[byteIndex] >> bitIndexInByte) & 1;
+    };
+
+    // Accumulate bits until we can emit rows
+    for (let i = this.lastBitCount; i < totalBits; i++) {
+      this.rowAccumulator.push(pullBit(i));
+
+      if (this.rowAccumulator.length >= rowW) {
+        const row = this.rowAccumulator.slice(0, rowW);
+        this.rowAccumulator = this.rowAccumulator.slice(rowW);
+        commitRow(row);
+      }
     }
+
+    // Update pointer
+    this.lastBitCount = totalBits;
+
+    // Present offscreen → visible (scaled, pixelated)
+    this.bitMatrixCtx.imageSmoothingEnabled = false;
+    this.bitMatrixCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+    this.bitMatrixCtx.drawImage(this.offscreen, 0, 0, this.canvasWidth, this.canvasHeight);
+
+    // Grid overlay if desired
+    if (this.showGrid) this._drawGrid();
+  }
+
+  // --- GRID RENDERING (optional; keeps prior behavior as fallback) ---
+  _drawBitGrid(uintArray) {
+    if (!this.bitMatrixCanvas || !this.bitMatrixCtx) return;
+
+    const totalBits = uintArray.length * 8;
+    if (totalBits <= this.lastBitCount) return;
+
+    // Paint only the new bits into the whole matrix buffer (wrap)
+    const w = this.matrixWidth;
+    const h = this.matrixHeight;
+
+    const img = this.offctx.getImageData(0, 0, w, h);
+    const data = img.data;
+
+    const paintOne = (pos /* 0..capacity-1 */, bit) => {
+      const y = Math.floor(pos / w);
+      const x = pos - y * w;
+      const base = (y * w + x) * 4;
+      const clr = bit ? this.colorOne : this.colorZero;
+      data[base]     = clr[0];
+      data[base + 1] = clr[1];
+      data[base + 2] = clr[2];
+      data[base + 3] = 255;
+    };
+
+    const cap = this.capacity;
+    const pullBit = (i) => {
+      const byteIndex = i >> 3;
+      const bitIndexInByte = 7 - (i & 7);
+      return (uintArray[byteIndex] >> bitIndexInByte) & 1;
+    };
+
+    const MAX_BITS_PER_PASS = 20000;
+    let next = this.lastBitCount;
+    while (next < totalBits) {
+      const end = Math.min(totalBits, next + MAX_BITS_PER_PASS);
+      for (; next < end; next++) {
+        const bit = pullBit(next);
+        const pos = next % cap;
+        paintOne(pos, bit);
+      }
+      // commit chunk
+      this.offctx.putImageData(img, 0, 0);
+    }
+
+    this.lastBitCount = totalBits;
+
+    this.bitMatrixCtx.imageSmoothingEnabled = false;
+    this.bitMatrixCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+    this.bitMatrixCtx.drawImage(this.offscreen, 0, 0, this.canvasWidth, this.canvasHeight);
+    if (this.showGrid) this._drawGrid();
+  }
+
+  // --- Optional grid overlay ---
+  _drawGrid() {
+    const ctx = this.bitMatrixCtx;
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(0,0,0,0.15)";
+    ctx.lineWidth = 1;
+
+    for (let x = 0; x <= this.matrixWidth; x += 10) {
+      const sx = x * this.pixelSize + 0.5;
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, this.canvasHeight); ctx.stroke();
+    }
+    for (let y = 0; y <= this.matrixHeight; y += 10) {
+      const sy = y * this.pixelSize + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(this.canvasWidth, sy); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // --- Resets ---
+  resetBitMatrix() {
+    this.lastBitCount = 0;
+    this.rowAccumulator = [];
+    this._clearOffscreenToWhite();
+    if (this.bitMatrixCtx) {
+      this.bitMatrixCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+      this.bitMatrixCtx.drawImage(this.offscreen, 0, 0, this.canvasWidth, this.canvasHeight);
+    }
+  }
+
+  setMatrixSize(cols, rows, pixelSize = this.pixelSize) {
+    this.matrixWidth = Math.max(1, cols | 0);
+    this.matrixHeight = Math.max(1, rows | 0);
+    this.pixelSize = Math.max(1, pixelSize | 0);
+    this.canvasWidth = this.matrixWidth * this.pixelSize;
+    this.canvasHeight = this.matrixHeight * this.pixelSize;
+    this.capacity = this.matrixWidth * this.matrixHeight;
+
+    this.offscreen.width = this.matrixWidth;
+    this.offscreen.height = this.matrixHeight;
+    this.offctx = this.offscreen.getContext("2d", { willReadFrequently: true });
+    this.rowImage = this.offctx.createImageData(this.matrixWidth, 1);
+
+    this.updateCanvasSize();
+    this.resetBitMatrix();
   }
 }
 
 // ============================================================================
-// PASSWORD GENERATOR CLASS
+// PASSWORD GENERATOR
 // ============================================================================
-
 class PasswordGenerator {
   constructor() {
     this.passwordBox = document.getElementById("passwordBox");
@@ -431,54 +335,47 @@ class PasswordGenerator {
     this.chkNums = document.getElementById("chkNums");
     this.chkSyms = document.getElementById("chkSyms");
   }
-
-  /**
-   * Generates a password using the provided random data
-   * @param {number[]} uintArray - Array of random uint8 values
-   */
   generatePassword(uintArray) {
+    if (!this.passwordBox) return;
     if (uintArray.length < 32) {
       this.passwordBox.value = "Not enough random data yet. Wait for hashing...";
       return;
     }
-
     let charset = "";
-    if (this.chkUpper.checked) charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    if (this.chkLower.checked) charset += "abcdefghijklmnopqrstuvwxyz";
-    if (this.chkNums.checked) charset += "0123456789";
-    if (this.chkSyms.checked) charset += "!@#$%^&*()-_=+[]{};:,.<>?";
-
+    if (this.chkUpper?.checked) charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    if (this.chkLower?.checked) charset += "abcdefghijklmnopqrstuvwxyz";
+    if (this.chkNums?.checked) charset += "0123456789";
+    if (this.chkSyms?.checked) charset += "!@#$%^&*()-_=+[]{};:,.<>?";
     if (charset.length === 0) {
       this.passwordBox.value = "Please select at least one character set.";
       return;
     }
-
-    const pwLength = Math.max(8, Math.min(64, parseInt(this.pwLengthEl.value) || 16));
+    const pwLength = Math.max(8, Math.min(64, parseInt(this.pwLengthEl?.value || "16")));
     let password = "";
-    
     for (let i = 0; i < pwLength; i++) {
       const r = uintArray[(i + uintArray.length - pwLength) % uintArray.length];
       password += charset[r % charset.length];
     }
-    
     this.passwordBox.value = password;
+    
+    // Reset data buffer after password generation
+    if (window.audioRNG) {
+      window.audioRNG.resetDataBuffer();
+    }
   }
 }
 
 // ============================================================================
-// AUDIO RNG CLASS
+// AUDIO RNG (unchanged except it calls drawBitMatrix → now waterfall)
 // ============================================================================
-
 class AudioRNG {
   constructor() {
-    // DOM elements
     this.bitsEl = document.getElementById("bits");
     this.uintArrayEl = document.getElementById("uintArray");
     this.hashOutput = document.getElementById("hashOutput");
     this.levelBar = document.getElementById("levelBar");
     this.levelText = document.getElementById("levelText");
-    
-    // New input control elements
+
     this.inputDeviceSelect = document.getElementById("inputDevice");
     this.gainSlider = document.getElementById("gainSlider");
     this.gainValue = document.getElementById("gainValue");
@@ -488,100 +385,69 @@ class AudioRNG {
     this.waveformInfo = document.getElementById("waveformInfo");
     this.compactLevelBar = document.getElementById("compactLevelBar");
     this.compactLevelText = document.getElementById("compactLevelText");
-    
-    // Audio context and analyzer
+
     this.audioCtx = null;
     this.analyser = null;
     this.gainNode = null;
     this.source = null;
     this.stream = null;
-    
-    // Data buffers
+
     this.rawBitBuffer = [];
     this.finalBitBuffer = [];
     this.collectedNumbers = [];
     this.uintArray = [];
-    
-    // Visualization and generators
+
     this.visualizationManager = new VisualizationManager();
+    // Optional: change waterfall direction/colors
+    // this.visualizationManager.setWaterfallDirection("down"); // newest at top (default)
+    // this.visualizationManager.setWaterfallColors([255,255,255],[0,0,0]); // 0->white,1->black
+
     this.passwordGenerator = new PasswordGenerator();
-    this.fileGenerator = null; // Will be set during initialization
-    
-    // Animation frame ID for cleanup
+    this.fileGenerator = null;
+
     this.animationFrameId = null;
-    
-    // Initialize controls
     this.initializeControls();
   }
 
-  /**
-   * Initialize all control event listeners and setup
-   */
   initializeControls() {
-    // Gain slider
-    this.gainSlider.addEventListener('input', (e) => {
-      this.gainValue.textContent = e.target.value + '%';
-      if (this.gainNode) {
-        this.gainNode.gain.value = e.target.value / 100;
-      }
+    this.gainSlider?.addEventListener("input", (e) => {
+      const val = Number(e.target.value);
+      if (this.gainValue) this.gainValue.textContent = `${val}%`;
+      if (this.gainNode) this.gainNode.gain.value = val / 100;
     });
 
-    // Device selection
-    this.inputDeviceSelect.addEventListener('change', (e) => {
-      if (e.target.value && this.audioCtx) {
-        this.restartWithDevice(e.target.value);
-      }
+    this.inputDeviceSelect?.addEventListener("change", (e) => {
+      const id = e.target.value;
+      if (id && this.audioCtx) this.restartWithDevice(id);
     });
 
-    // Refresh devices button
-    this.refreshDevicesBtn.addEventListener('click', () => {
-      this.loadAudioDevices();
-    });
+    this.refreshDevicesBtn?.addEventListener("click", () => this.loadAudioDevices());
+    this.startBtn?.addEventListener("click", () => this.start());
+    this.stopBtn?.addEventListener("click", () => this.stop());
 
-    // Start button
-    this.startBtn.addEventListener('click', () => {
-      this.start();
-    });
-
-    // Stop button
-    this.stopBtn.addEventListener('click', () => {
-      this.stop();
-    });
-
-    // Load initial devices
     this.loadAudioDevices();
   }
 
-  /**
-   * Load available audio input devices
-   */
   async loadAudioDevices() {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = devices.filter(device => device.kind === 'audioinput');
-      
+      const audioInputs = devices.filter(d => d.kind === "audioinput");
+      if (!this.inputDeviceSelect) return;
       this.inputDeviceSelect.innerHTML = '<option value="">Select input device...</option>';
-      
-      audioInputs.forEach(device => {
-        const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.textContent = device.label || `Microphone ${audioInputs.indexOf(device) + 1}`;
-        this.inputDeviceSelect.appendChild(option);
+      audioInputs.forEach((device, idx) => {
+        const o = document.createElement("option");
+        o.value = device.deviceId;
+        o.textContent = device.label || `Microphone ${idx + 1}`;
+        this.inputDeviceSelect.appendChild(o);
       });
-    } catch (error) {
-      console.error('Error loading audio devices:', error);
-      this.waveformInfo.textContent = 'Error loading audio devices';
+    } catch (e) {
+      console.error("Error loading audio devices:", e);
+      if (this.waveformInfo) this.waveformInfo.textContent = "Error loading audio devices";
     }
   }
 
-  /**
-   * Restart audio with specific device
-   */
   async restartWithDevice(deviceId) {
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-    }
-    
+    if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     try {
       const constraints = {
         audio: {
@@ -591,150 +457,108 @@ class AudioRNG {
           autoGainControl: false
         }
       };
-      
       this.stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.setupAudioContext();
-    } catch (error) {
-      console.error('Error switching device:', error);
-      this.waveformInfo.textContent = 'Error switching to selected device';
+    } catch (e) {
+      console.error("Error switching device:", e);
+      if (this.waveformInfo) this.waveformInfo.textContent = "Error switching to selected device";
     }
   }
 
-  /**
-   * Setup audio context with gain control
-   */
   setupAudioContext() {
-    if (this.audioCtx) {
-      this.audioCtx.close();
-    }
-    
+    if (this.audioCtx) this.audioCtx.close();
     this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     this.source = this.audioCtx.createMediaStreamSource(this.stream);
-    
-    // Create gain node for level control
+
     this.gainNode = this.audioCtx.createGain();
-    this.gainNode.gain.value = this.gainSlider.value / 100;
-    
+    this.gainNode.gain.value = (Number(this.gainSlider?.value) || 100) / 100;
+
     this.analyser = this.audioCtx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.8;
-    
-    // Connect audio nodes
+
     this.source.connect(this.gainNode);
     this.gainNode.connect(this.analyser);
-    
-    this.waveformInfo.textContent = 'Audio connected - Click Start RNG to begin';
+
+    if (this.waveformInfo) this.waveformInfo.textContent = "Audio connected - Click Start RNG to begin";
   }
 
-  /**
-   * Processes audio samples to extract random bits using Von Neumann method
-   * @param {Uint8Array} data - Audio sample data
-   */
   async processSamples(data) {
     for (let i = 0; i < data.length; i++) {
-      const sample = data[i];
-      const bit = sample & 1;
+      const bit = data[i] & 1;
       this.rawBitBuffer.push(bit);
 
       if (this.rawBitBuffer.length >= 2) {
         const b1 = this.rawBitBuffer.shift();
         const b2 = this.rawBitBuffer.shift();
-
-        // Von Neumann correction: only use 01 and 10 pairs
         if (b1 === 0 && b2 === 1) this.finalBitBuffer.push(0);
         else if (b1 === 1 && b2 === 0) this.finalBitBuffer.push(1);
 
-        // When we have 8 bits, create a byte
         if (this.finalBitBuffer.length === 8) {
           const uint8 = bitsToUint8(this.finalBitBuffer);
           this.collectedNumbers.push(uint8);
           this.finalBitBuffer = [];
 
-          // When we have enough numbers, hash them
           if (this.collectedNumbers.length >= 1000) {
             const asciiString = String.fromCharCode(...this.collectedNumbers.slice(0, 1000));
             const digest = await sha256String(asciiString);
-
             this.uintArray.push(...digest);
             this.collectedNumbers = [];
 
-            // Update UI
-            this.uintArrayEl.value = this.uintArray.slice(-50).join(", ");
-            this.hashOutput.textContent = "Last SHA-256 Hash (hex): " + buf2hex(digest);
+            if (this.uintArrayEl) this.uintArrayEl.value = this.uintArray.slice(-50).join(", ");
+            if (this.hashOutput) this.hashOutput.textContent = "Last SHA-256 Hash (hex): " + buf2hex(digest);
 
-            // Update visualization
             this.visualizationManager.drawHistogram(this.uintArray);
             this.visualizationManager.drawBitMatrix(this.uintArray);
 
-            // Update file generator progress if it's waiting for data
-            if (this.fileGenerator && this.fileGenerator.isGenerating) {
-              this.fileGenerator.updateProgress(this.uintArray);
-            }
+            if (this.fileGenerator?.isGenerating) this.fileGenerator.updateProgress(this.uintArray);
           }
         }
       }
     }
-    
-    // Update bit buffer display
-    this.bitsEl.textContent = 
-      "Current unbiased bits (" + this.finalBitBuffer.length + "/8): " + this.finalBitBuffer.join("");
+    if (this.bitsEl) {
+      this.bitsEl.textContent =
+        `Current unbiased bits (${this.finalBitBuffer.length}/8): ` + this.finalBitBuffer.join("");
+    }
   }
 
-  /**
-   * Updates the level meter based on audio input
-   * @param {Uint8Array} data - Audio sample data
-   */
   updateLevelMeter(data) {
-    // Calculate RMS (Root Mean Square) for level detection
+    if (!this.levelBar || !this.levelText || !this.compactLevelBar || !this.compactLevelText) return;
     let sum = 0;
     for (let i = 0; i < data.length; i++) {
-      const sample = (data[i] - 128) / 128; // Convert to -1 to 1 range
+      const sample = (data[i] - 128) / 128;
       sum += sample * sample;
     }
     const rms = Math.sqrt(sum / data.length);
     const level = Math.min(100, Math.max(0, rms * 100));
-    
-    // Update app bar level meter
-    this.levelBar.style.width = level + '%';
+
+    this.levelBar.style.width = `${level}%`;
     this.levelText.textContent = `Level: ${Math.round(level)}%`;
-    
-    // Update compact level meter
-    this.compactLevelBar.style.setProperty('--level', level + '%');
+    this.compactLevelBar.style.setProperty("--level", `${level}%`);
     this.compactLevelText.textContent = `${Math.round(level)}%`;
-    
-    // Change color based on level
-    const colorGradient = level < 30 
-      ? 'linear-gradient(90deg, #4caf50 0%, #4caf50 100%)'
-      : level < 70 
-      ? 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 100%)'
-      : 'linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%)';
-    
-    this.levelBar.style.background = colorGradient;
+
+    const grad =
+      level < 30
+        ? "linear-gradient(90deg, #4caf50 0%, #4caf50 100%)"
+        : level < 70
+        ? "linear-gradient(90deg, #4caf50 0%, #ffeb3b 100%)"
+        : "linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%)";
+    this.levelBar.style.background = grad;
   }
 
-  /**
-   * Main drawing loop that processes audio and updates visualizations
-   */
   drawLoop() {
     this.animationFrameId = requestAnimationFrame(() => this.drawLoop());
-    
     if (!this.analyser) return;
-
     const data = new Uint8Array(this.analyser.fftSize);
     this.analyser.getByteTimeDomainData(data);
-
     this.processSamples(data);
     this.updateLevelMeter(data);
     this.visualizationManager.drawWaveform(data);
   }
 
-  /**
-   * Starts the audio RNG by requesting microphone access
-   */
   async start() {
     try {
-      // Get selected device or default
-      const deviceId = this.inputDeviceSelect.value;
+      const deviceId = this.inputDeviceSelect?.value;
       const constraints = {
         audio: {
           deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -743,89 +567,73 @@ class AudioRNG {
           autoGainControl: false
         }
       };
-
       this.stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.setupAudioContext();
-      
-      // Reset bit matrix for new generation
       this.visualizationManager.resetBitMatrix();
-      
       this.drawLoop();
-      
-      // Update UI
-      this.startBtn.disabled = true;
-      this.startBtn.textContent = '🎤 RNG Running...';
-      this.stopBtn.disabled = false;
-      this.waveformInfo.textContent = 'RNG is running - generating random numbers';
-      
+
+      if (this.startBtn) { this.startBtn.disabled = true; this.startBtn.textContent = "🎤 RNG Running..."; }
+      if (this.stopBtn) this.stopBtn.disabled = false;
+      if (this.waveformInfo) this.waveformInfo.textContent = "RNG is running - generating random numbers";
       return true;
-    } catch (error) {
-      console.error("Error starting audio RNG:", error);
-      this.waveformInfo.textContent = 'Error starting audio capture: ' + error.message;
+    } catch (e) {
+      console.error("Error starting audio RNG:", e);
+      if (this.waveformInfo) this.waveformInfo.textContent = "Error starting audio capture: " + e.message;
       return false;
     }
   }
 
-  /**
-   * Stops the audio RNG and cleans up resources
-   */
   stop() {
-    if (this.animationFrameId) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
-    
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-      this.stream = null;
-    }
-    
-    if (this.audioCtx) {
-      this.audioCtx.close();
-      this.audioCtx = null;
-    }
-    
-    this.analyser = null;
-    this.gainNode = null;
-    this.source = null;
-    
-    // Update UI
-    this.startBtn.disabled = false;
-    this.startBtn.textContent = '🎤 Start RNG';
-    this.stopBtn.disabled = true;
-    this.waveformInfo.textContent = 'RNG stopped - Click Start RNG to begin again';
-    
-    // Clear level meters
-    this.levelBar.style.width = '0%';
-    this.levelText.textContent = 'Level: 0%';
-    this.compactLevelBar.style.setProperty('--level', '0%');
-    this.compactLevelText.textContent = '0%';
-    
-    // Reset file generator state
+    if (this.animationFrameId) { cancelAnimationFrame(this.animationFrameId); this.animationFrameId = null; }
+    if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null; }
+
+    this.analyser = null; this.gainNode = null; this.source = null;
+
+    if (this.startBtn) { this.startBtn.disabled = false; this.startBtn.textContent = "🎤 Start RNG"; }
+    if (this.stopBtn) this.stopBtn.disabled = true;
+    if (this.waveformInfo) this.waveformInfo.textContent = "RNG stopped - Click Start RNG to begin again";
+
+    if (this.levelBar) this.levelBar.style.width = "0%";
+    if (this.levelText) this.levelText.textContent = "Level: 0%";
+    if (this.compactLevelBar) this.compactLevelBar.style.setProperty("--level", "0%");
+    if (this.compactLevelText) this.compactLevelText.textContent = "0%";
+
     if (this.fileGenerator) {
       this.fileGenerator.isGenerating = false;
       this.fileGenerator.requiredDataSize = 0;
-      this.fileGenerator.genFileBtn.disabled = false;
-      this.fileGenerator.genFileBtn.textContent = "Generate Random File";
-      this.fileGenerator.downloadFileBtn.disabled = true;
-      this.fileGenerator.fileInfoEl.textContent = "Start RNG to begin collecting random data for file generation.";
-      this.fileGenerator.fileInfoEl.className = "file-info";
+      if (this.fileGenerator.genFileBtn) {
+        this.fileGenerator.genFileBtn.disabled = false;
+        this.fileGenerator.genFileBtn.textContent = "Generate Random File";
+      }
+      if (this.fileGenerator.downloadFileBtn) this.fileGenerator.downloadFileBtn.disabled = true;
+      if (this.fileGenerator.fileInfoEl) {
+        this.fileGenerator.fileInfoEl.textContent = "Start RNG to begin collecting random data for file generation.";
+        this.fileGenerator.fileInfoEl.className = "file-info";
+      }
     }
   }
 
-  /**
-   * Gets the current random data array
-   * @returns {number[]} Array of random uint8 values
-   */
-  getRandomData() {
-    return this.uintArray;
+  getRandomData() { return this.uintArray; }
+
+  // Reset data buffers
+  resetDataBuffer() {
+    this.rawBitBuffer = [];
+    this.finalBitBuffer = [];
+    this.collectedNumbers = [];
+    this.uintArray = [];
+    this.visualizationManager.resetBitMatrix();
+    
+    // Reset UI elements
+    if (this.bitsEl) this.bitsEl.textContent = "Current unbiased bits (0/8): ";
+    if (this.uintArrayEl) this.uintArrayEl.value = "";
+    if (this.hashOutput) this.hashOutput.textContent = "";
   }
 }
 
 // ============================================================================
-// FILE GENERATOR CLASS
+// FILE GENERATOR
 // ============================================================================
-
 class FileGenerator {
   constructor() {
     this.fileSizeEl = document.getElementById("fileSize");
@@ -836,123 +644,99 @@ class FileGenerator {
     this.generatedFile = null;
     this.isGenerating = false;
     this.requiredDataSize = 0;
-    
-    // Set initial message
-    this.fileInfoEl.textContent = "Start RNG to begin collecting random data for file generation.";
-    this.fileInfoEl.className = "file-info";
+
+    if (this.fileInfoEl) {
+      this.fileInfoEl.textContent = "Start RNG to begin collecting random data for file generation.";
+      this.fileInfoEl.className = "file-info";
+    }
   }
 
-  /**
-   * Generates a random file using the provided random data
-   * @param {number[]} uintArray - Array of random uint8 values
-   */
   generateFile(uintArray) {
-    const fileSize = Math.max(1, Math.min(10485760, parseInt(this.fileSizeEl.value) || 1024));
-    const fileName = this.fileNameEl.value || "random_data.bin";
-    
-    // Check if we have enough data for the requested file size
+    const fileSize = Math.max(1, Math.min(10_485_760, parseInt(this.fileSizeEl?.value || "1024")));
+    const fileName = (this.fileNameEl?.value || "random_data.bin").trim();
+
     if (uintArray.length < fileSize) {
       this.requiredDataSize = fileSize;
       this.isGenerating = true;
-      this.genFileBtn.disabled = true;
-      this.genFileBtn.textContent = "Collecting Data...";
-      
-      this.fileInfoEl.innerHTML = `
-        <strong>Collecting Random Data...</strong><br>
-        Required: ${fileSize} bytes (${(fileSize / 1024).toFixed(2)} KB)<br>
-        Collected: ${uintArray.length} bytes (${(uintArray.length / 1024).toFixed(2)} KB)<br>
-        Progress: ${((uintArray.length / fileSize) * 100).toFixed(1)}%<br>
-        <div style="background: #333; height: 8px; border-radius: 4px; margin-top: 8px;">
-          <div style="background: #4caf50; height: 100%; width: ${(uintArray.length / fileSize) * 100}%; border-radius: 4px; transition: width 0.3s ease;"></div>
-        </div>
-      `;
-      this.fileInfoEl.className = "file-info";
-      this.downloadFileBtn.disabled = true;
+      if (this.genFileBtn) { this.genFileBtn.disabled = true; this.genFileBtn.textContent = "Collecting Data..."; }
+      if (this.fileInfoEl) {
+        const pct = ((uintArray.length / fileSize) * 100).toFixed(1);
+        this.fileInfoEl.innerHTML = `
+          <strong>Collecting Random Data...</strong><br>
+          Required: ${fileSize} bytes (${(fileSize / 1024).toFixed(2)} KB)<br>
+          Collected: ${uintArray.length} bytes (${(uintArray.length / 1024).toFixed(2)} KB)<br>
+          Progress: ${pct}%<br>
+          <div style="background:#333;height:8px;border-radius:4px;margin-top:8px;">
+            <div style="background:#4caf50;height:100%;width:${pct}%;border-radius:4px;transition:width .3s ease;"></div>
+          </div>
+        `;
+        this.fileInfoEl.className = "file-info";
+      }
+      if (this.downloadFileBtn) this.downloadFileBtn.disabled = true;
       return;
     }
 
-    // We have enough data, generate the file
     this.createFileFromData(uintArray, fileSize, fileName);
   }
 
-  /**
-   * Creates the actual file from the collected data
-   * @param {number[]} uintArray - Array of random uint8 values
-   * @param {number} fileSize - Size of file to create
-   * @param {string} fileName - Name of the file
-   */
   createFileFromData(uintArray, fileSize, fileName) {
-    // Use only the exact amount of data needed (no repetition)
     const fileData = new Uint8Array(fileSize);
-    for (let i = 0; i < fileSize; i++) {
-      fileData[i] = uintArray[i];
-    }
+    for (let i = 0; i < fileSize; i++) fileData[i] = uintArray[i];
 
-    // Create a Blob and store it
-    this.generatedFile = new Blob([fileData], { type: 'application/octet-stream' });
-    
-    // Update UI
-    this.fileInfoEl.innerHTML = `
-      <strong>File Generated Successfully!</strong><br>
-      Size: ${fileSize} bytes (${(fileSize / 1024).toFixed(2)} KB)<br>
-      Name: ${fileName}<br>
-      Data Source: ${fileSize} bytes of cryptographically secure random data<br>
-      Ready for download.
-    `;
-    this.fileInfoEl.className = "file-info";
-    this.downloadFileBtn.disabled = false;
-    this.genFileBtn.disabled = false;
-    this.genFileBtn.textContent = "Generate Random File";
+    this.generatedFile = new Blob([fileData], { type: "application/octet-stream" });
+
+    if (this.fileInfoEl) {
+      this.fileInfoEl.innerHTML = `
+        <strong>File Generated Successfully!</strong><br>
+        Size: ${fileSize} bytes (${(fileSize / 1024).toFixed(2)} KB)<br>
+        Name: ${fileName}<br>
+        Data Source: ${fileSize} bytes of cryptographically secure random data<br>
+        Ready for download.
+      `;
+      this.fileInfoEl.className = "file-info";
+    }
+    if (this.downloadFileBtn) this.downloadFileBtn.disabled = false;
+    if (this.genFileBtn) { this.genFileBtn.disabled = false; this.genFileBtn.textContent = "Generate Random File"; }
     this.isGenerating = false;
+    
+    // Reset data buffer after file generation
+    if (window.audioRNG) {
+      window.audioRNG.resetDataBuffer();
+    }
   }
 
-  /**
-   * Updates the progress display during data collection
-   * @param {number[]} uintArray - Current array of random uint8 values
-   */
   updateProgress(uintArray) {
-    if (!this.isGenerating || this.requiredDataSize === 0) return;
+    if (!this.isGenerating || this.requiredDataSize === 0 || !this.fileInfoEl) return;
 
     const progress = (uintArray.length / this.requiredDataSize) * 100;
-    
     this.fileInfoEl.innerHTML = `
       <strong>Collecting Random Data...</strong><br>
       Required: ${this.requiredDataSize} bytes (${(this.requiredDataSize / 1024).toFixed(2)} KB)<br>
       Collected: ${uintArray.length} bytes (${(uintArray.length / 1024).toFixed(2)} KB)<br>
       Progress: ${progress.toFixed(1)}%<br>
-      <div style="background: #333; height: 8px; border-radius: 4px; margin-top: 8px;">
-        <div style="background: #4caf50; height: 100%; width: ${Math.min(100, progress)}%; border-radius: 4px; transition: width 0.3s ease;"></div>
+      <div style="background:#333;height:8px;border-radius:4px;margin-top:8px;">
+        <div style="background:#4caf50;height:100%;width:${Math.min(100, progress)}%;border-radius:4px;transition:width .3s ease;"></div>
       </div>
     `;
-
-    // Check if we now have enough data
     if (uintArray.length >= this.requiredDataSize) {
-      this.createFileFromData(uintArray, this.requiredDataSize, this.fileNameEl.value || "random_data.bin");
+      this.createFileFromData(uintArray, this.requiredDataSize, (this.fileNameEl?.value || "random_data.bin").trim());
     }
   }
 
-  /**
-   * Downloads the generated file
-   */
   downloadFile() {
     if (!this.generatedFile) return;
-
-    const fileName = this.fileNameEl.value || "random_data.bin";
+    const fileName = (this.fileNameEl?.value || "random_data.bin").trim();
     const url = URL.createObjectURL(this.generatedFile);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 }
 
 // ============================================================================
-// RANDOM NUMBER GENERATOR CLASS
+// RANDOM NUMBER GENERATOR
 // ============================================================================
-
 class RandomNumberGenerator {
   constructor() {
     this.numCountEl = document.getElementById("numCount");
@@ -965,154 +749,109 @@ class RandomNumberGenerator {
     this.copyNumbersBtn = document.getElementById("copyNumbersBtn");
   }
 
-  /**
-   * Gets the currently selected number format
-   * @returns {string} The selected format ('hex', 'decimal', or 'binary')
-   */
   getSelectedFormat() {
-    if (this.numHexEl.checked) return 'hex';
-    if (this.numDecimalEl.checked) return 'decimal';
-    if (this.numBinaryEl.checked) return 'binary';
-    return 'hex'; // Default fallback
+    if (this.numHexEl?.checked) return "hex";
+    if (this.numDecimalEl?.checked) return "decimal";
+    if (this.numBinaryEl?.checked) return "binary";
+    return "hex";
   }
 
-  /**
-   * Generates random numbers using the provided random data
-   * @param {number[]} uintArray - Array of random uint8 values
-   */
   generateNumbers(uintArray) {
+    if (!this.numbersBoxEl) return;
     if (uintArray.length < 32) {
       this.numbersBoxEl.value = "Not enough random data yet. Wait for hashing...";
-      this.copyNumbersBtn.disabled = true;
+      if (this.copyNumbersBtn) this.copyNumbersBtn.disabled = true;
       return;
     }
 
-    const count = Math.max(1, Math.min(10000, parseInt(this.numCountEl.value) || 100));
-    const min = parseInt(this.numMinEl.value) || 0;
-    const max = parseInt(this.numMaxEl.value) || 255;
-    
+    const count = Math.max(1, Math.min(10000, parseInt(this.numCountEl?.value || "100")));
+    const min = parseInt(this.numMinEl?.value || "0");
+    const max = parseInt(this.numMaxEl?.value || "255");
     if (min >= max) {
       this.numbersBoxEl.value = "Error: Min value must be less than max value.";
-      this.copyNumbersBtn.disabled = true;
+      if (this.copyNumbersBtn) this.copyNumbersBtn.disabled = true;
       return;
     }
 
     const numbers = [];
     for (let i = 0; i < count; i++) {
-      const randomValue = uintArray[i % uintArray.length];
-      const scaledValue = min + (randomValue % (max - min + 1));
-      numbers.push(scaledValue);
+      const rv = uintArray[i % uintArray.length];
+      numbers.push(min + (rv % (max - min + 1)));
     }
 
-    // Format numbers based on selected format
-    const format = this.getSelectedFormat();
-    let formattedNumbers = [];
+    const fmt = this.getSelectedFormat();
+    let out;
+    if (fmt === "hex") out = numbers.map(n => "0x" + n.toString(16).toUpperCase().padStart(2, "0"));
+    else if (fmt === "decimal") out = numbers.map(n => String(n));
+    else out = numbers.map(n => "0b" + n.toString(2).padStart(8, "0"));
+
+    this.numbersBoxEl.value = out.join(", ");
+    if (this.copyNumbersBtn) this.copyNumbersBtn.disabled = false;
     
-    switch (format) {
-      case 'hex':
-        formattedNumbers = numbers.map(n => "0x" + n.toString(16).toUpperCase().padStart(2, "0"));
-        break;
-      case 'decimal':
-        formattedNumbers = numbers.map(n => n.toString());
-        break;
-      case 'binary':
-        formattedNumbers = numbers.map(n => "0b" + n.toString(2).padStart(8, "0"));
-        break;
-      default:
-        formattedNumbers = numbers.map(n => "0x" + n.toString(16).toUpperCase().padStart(2, "0"));
+    // Reset data buffer after number generation
+    if (window.audioRNG) {
+      window.audioRNG.resetDataBuffer();
     }
-
-    this.numbersBoxEl.value = formattedNumbers.join(", ");
-    this.copyNumbersBtn.disabled = false;
   }
 
-  /**
-   * Copies the generated numbers to clipboard
-   */
   copyToClipboard() {
+    if (!this.numbersBoxEl) return;
     this.numbersBoxEl.select();
-    document.execCommand('copy');
-    
-    // Visual feedback
-    const originalText = this.copyNumbersBtn.textContent;
+    document.execCommand("copy");
+    if (!this.copyNumbersBtn) return;
+    const t = this.copyNumbersBtn.textContent;
     this.copyNumbersBtn.textContent = "Copied!";
     this.copyNumbersBtn.style.background = "#4caf50";
-    
     setTimeout(() => {
-      this.copyNumbersBtn.textContent = originalText;
+      this.copyNumbersBtn.textContent = t;
       this.copyNumbersBtn.style.background = "";
     }, 2000);
   }
 }
 
 // ============================================================================
-// TAB MANAGER CLASS
+// APP INIT
 // ============================================================================
-
-class TabManager {
-  constructor() {
-    this.tabButtons = document.querySelectorAll('.tab-button');
-    this.tabPanels = document.querySelectorAll('.tab-panel');
-    
-    this.initializeTabs();
-  }
-
-  initializeTabs() {
-    this.tabButtons.forEach(button => {
-      button.addEventListener('click', () => {
-        const targetTab = button.getAttribute('data-tab');
-        this.switchTab(targetTab);
-      });
-    });
-  }
-
-  switchTab(tabName) {
-    // Remove active class from all buttons and panels
-    this.tabButtons.forEach(btn => btn.classList.remove('active'));
-    this.tabPanels.forEach(panel => panel.classList.remove('active'));
-
-    // Add active class to clicked button and corresponding panel
-    const activeButton = document.querySelector(`[data-tab="${tabName}"]`);
-    const activePanel = document.getElementById(`${tabName}-tab`);
-    
-    if (activeButton && activePanel) {
-      activeButton.classList.add('active');
-      activePanel.classList.add('active');
-    }
-  }
-}
-
-// ============================================================================
-// APPLICATION INITIALIZATION
-// ============================================================================
-
-// Create the main RNG instance
 const audioRNG = new AudioRNG();
+// Make audioRNG globally accessible for reset functionality
+window.audioRNG = audioRNG;
 const passwordGenerator = audioRNG.passwordGenerator;
 const fileGenerator = new FileGenerator();
 const randomNumberGenerator = new RandomNumberGenerator();
-const tabManager = new TabManager();
+const tabManager = new (class TabManager {
+  constructor() {
+    this.tabButtons = document.querySelectorAll(".tab-button");
+    this.tabPanels = document.querySelectorAll(".tab-panel");
+    this.tabButtons.forEach(btn => btn.addEventListener("click", () => {
+      const t = btn.getAttribute("data-tab");
+      this.switchTab(t);
+    }));
+  }
+  switchTab(tabName) {
+    if (!tabName) return;
+    this.tabButtons.forEach(b => b.classList.remove("active"));
+    this.tabPanels.forEach(p => p.classList.remove("active"));
+    document.querySelector(`.tab-button[data-tab="${tabName}"]`)?.classList.add("active");
+    document.getElementById(`${tabName}-tab`)?.classList.add("active");
+  }
+})();
 
-// Set the file generator reference in AudioRNG for progress updates
+// Link RNG ↔ file progress
 audioRNG.fileGenerator = fileGenerator;
 
-// Set up event listeners
-document.getElementById("genPwBtn").onclick = () => {
+// Buttons
+document.getElementById("genPwBtn")?.addEventListener("click", () => {
   passwordGenerator.generatePassword(audioRNG.getRandomData());
-};
-
-document.getElementById("genFileBtn").onclick = () => {
+});
+document.getElementById("genFileBtn")?.addEventListener("click", () => {
   fileGenerator.generateFile(audioRNG.getRandomData());
-};
-
-document.getElementById("downloadFileBtn").onclick = () => {
+});
+document.getElementById("downloadFileBtn")?.addEventListener("click", () => {
   fileGenerator.downloadFile();
-};
-
-document.getElementById("genNumbersBtn").onclick = () => {
+});
+document.getElementById("genNumbersBtn")?.addEventListener("click", () => {
   randomNumberGenerator.generateNumbers(audioRNG.getRandomData());
-};
-
-document.getElementById("copyNumbersBtn").onclick = () => {
+});
+document.getElementById("copyNumbersBtn")?.addEventListener("click", () => {
   randomNumberGenerator.copyToClipboard();
-};
+});
