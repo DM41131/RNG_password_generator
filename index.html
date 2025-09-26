@@ -66,101 +66,88 @@
 
 
 
-        <!-- Generator Tabs Section -->
-        <section class="section">
-          <h3>🎲 Random Data Generators</h3>
-          
-          <!-- Tab Navigation -->
-          <div class="tab-navigation">
-            <button class="tab-button active" data-tab="password">🔑 Password Generator</button>
-            <button class="tab-button" data-tab="file">📁 File Generator</button>
-            <button class="tab-button" data-tab="numbers">🔢 Random Numbers</button>
-          </div>
-    
-          <!-- Tab Content -->
-          <div class="tab-content">
-            <!-- Password Generator Tab -->
-            <div class="tab-panel active" id="password-tab">
-              <div class="form-group">
-                <div class="form-row">
-                  <label>Password length:
-                    <input type="number" id="pwLength" value="16" min="8" max="64">
-                  </label>
-                </div>
-                <div class="form-row">
-                  <label><input type="checkbox" id="chkUpper" checked> Uppercase (A-Z)</label>
-                  <label><input type="checkbox" id="chkLower" checked> Lowercase (a-z)</label>
-                  <label><input type="checkbox" id="chkNums" checked> Numbers (0-9)</label>
-                  <label><input type="checkbox" id="chkSyms" checked> Symbols (!@#$...)</label>
-                </div>
-              </div>
-              <div class="controls">
-                <button id="genPwBtn">Generate Password</button>
-              </div>
-              <textarea id="passwordBox" readonly placeholder="Generated password will appear here..."></textarea>
-            </div>
-    
-            <!-- File Generator Tab -->
-            <div class="tab-panel" id="file-tab">
-              <div class="form-group">
-                <div class="form-row">
-                  <label>File size (bytes):
-                    <input type="number" id="fileSize" value="1024" min="1" max="10485760">
-                  </label>
-                  <label>File name:
-                    <input type="text" id="fileName" value="random_data.bin" placeholder="Enter filename">
-                  </label>
-                </div>
-              </div>
-              <div class="controls">
-                <button id="genFileBtn">Generate Random File</button>
-                <button id="downloadFileBtn" disabled>Download File</button>
-              </div>
-              <div id="fileInfo" class="file-info"></div>
-            </div>
-    
-            <!-- Random Numbers Tab -->
-            <div class="tab-panel" id="numbers-tab">
-              <div class="form-group">
-                <div class="form-row">
-                  <label>Number count:
-                    <input type="number" id="numCount" value="100" min="1" max="10000">
-                  </label>
-                  <label>Number range:
-                    <input type="number" id="numMin" value="0" placeholder="Min">
-                    <input type="number" id="numMax" value="255" placeholder="Max">
-                  </label>
-                </div>
-                <div class="form-row">
-                  <label><input type="radio" name="numberFormat" id="numHex" value="hex" checked> Hexadecimal format</label>
-                  <label><input type="radio" name="numberFormat" id="numDecimal" value="decimal"> Decimal format</label>
-                  <label><input type="radio" name="numberFormat" id="numBinary" value="binary"> Binary format</label>
-                </div>
-              </div>
-              <div class="controls">
-                <button id="genNumbersBtn">Generate Numbers</button>
-                <button id="copyNumbersBtn" disabled>Copy to Clipboard</button>
-              </div>
-              <textarea id="numbersBox" readonly placeholder="Generated numbers will appear here..."></textarea>
-            </div>
-          </div>
-        </section>
-
-
-    <!-- Analysis & Data Section -->
+    <!-- Combined Generators & Analysis Section -->
     <section class="section">
-      <h3>📊 Analysis & Random Data</h3>
+      <h3>🎲 Random Data Tools & Analysis</h3>
       
       <!-- Tab Navigation -->
       <div class="tab-navigation">
-        <button class="tab-button active" data-tab="visualization">📈 Visualizations</button>
-        <button class="tab-button" data-tab="rng">🔢 Random Data</button>
+        <button class="tab-button active" data-tab="password">🔑 Password Generator</button>
+        <button class="tab-button" data-tab="file">📁 File Generator</button>
+        <button class="tab-button" data-tab="numbers">🔢 Random Numbers</button>
+        <button class="tab-button" data-tab="visualization">📈 Visualizations</button>
+        <button class="tab-button" data-tab="rng">🔢 Raw Data</button>
       </div>
 
       <!-- Tab Content -->
       <div class="tab-content">
+        <!-- Password Generator Tab -->
+        <div class="tab-panel active" id="password-tab">
+          <div class="form-group">
+            <div class="form-row">
+              <label>Password length:
+                <input type="number" id="pwLength" value="16" min="8" max="64">
+              </label>
+            </div>
+            <div class="form-row">
+              <label><input type="checkbox" id="chkUpper" checked> Uppercase (A-Z)</label>
+              <label><input type="checkbox" id="chkLower" checked> Lowercase (a-z)</label>
+              <label><input type="checkbox" id="chkNums" checked> Numbers (0-9)</label>
+              <label><input type="checkbox" id="chkSyms" checked> Symbols (!@#$...)</label>
+            </div>
+          </div>
+          <div class="controls">
+            <button id="genPwBtn">Generate Password</button>
+          </div>
+          <textarea id="passwordBox" readonly placeholder="Generated password will appear here..."></textarea>
+        </div>
+
+        <!-- File Generator Tab -->
+        <div class="tab-panel" id="file-tab">
+          <div class="form-group">
+            <div class="form-row">
+              <label>File size (bytes):
+                <input type="number" id="fileSize" value="1024" min="1" max="10485760">
+              </label>
+              <label>File name:
+                <input type="text" id="fileName" value="random_data.bin" placeholder="Enter filename">
+              </label>
+            </div>
+          </div>
+          <div class="controls">
+            <button id="genFileBtn">Generate Random File</button>
+            <button id="downloadFileBtn" disabled>Download File</button>
+          </div>
+          <div id="fileInfo" class="file-info"></div>
+        </div>
+
+        <!-- Random Numbers Tab -->
+        <div class="tab-panel" id="numbers-tab">
+          <div class="form-group">
+            <div class="form-row">
+              <label>Number count:
+                <input type="number" id="numCount" value="100" min="1" max="10000">
+              </label>
+              <label>Number range:
+                <input type="number" id="numMin" value="0" placeholder="Min">
+                <input type="number" id="numMax" value="255" placeholder="Max">
+              </label>
+            </div>
+            <div class="form-row">
+              <label><input type="radio" name="numberFormat" id="numHex" value="hex" checked> Hexadecimal format</label>
+              <label><input type="radio" name="numberFormat" id="numDecimal" value="decimal"> Decimal format</label>
+              <label><input type="radio" name="numberFormat" id="numBinary" value="binary"> Binary format</label>
+            </div>
+          </div>
+          <div class="controls">
+            <button id="genNumbersBtn">Generate Numbers</button>
+            <button id="copyNumbersBtn" disabled>Copy to Clipboard</button>
+          </div>
+          <textarea id="numbersBox" readonly placeholder="Generated numbers will appear here..."></textarea>
+        </div>
+
         <!-- Visualizations Tab -->
-        <div class="tab-panel active" id="visualization-tab">
+        <div class="tab-panel" id="visualization-tab">
           <div class="visualization-container">
             <div class="visualization-item">
               <h4>Audio Waveform</h4>
@@ -177,7 +164,7 @@
           </div>
         </div>
 
-        <!-- Random Data Tab -->
+        <!-- Raw Data Tab -->
         <div class="tab-panel" id="rng-tab">
           <h4>🔢 Random Number Generation</h4>
           <div id="bits">Buffer: </div>
