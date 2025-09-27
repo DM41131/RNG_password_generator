@@ -530,20 +530,25 @@ class AudioRNG {
       sum += sample * sample;
     }
     const rms = Math.sqrt(sum / data.length);
-    const level = Math.min(100, Math.max(0, rms * 100));
+    
+    // Convert to logarithmic scale (dB)
+    // Add small epsilon to avoid log(0)
+    const rmsDb = 20 * Math.log10(Math.max(rms, 0.0001));
+    
+    // Map dB range to 0-100% display
+    // Typical audio range: -60dB to 0dB maps to 0-100%
+    const minDb = -60;
+    const maxDb = 0;
+    const normalizedDb = Math.max(0, Math.min(1, (rmsDb - minDb) / (maxDb - minDb)));
+    const level = normalizedDb * 100;
 
     this.levelBar.style.width = `${level}%`;
-    this.levelText.textContent = `Level: ${Math.round(level)}%`;
+    this.levelText.textContent = `Level: ${Math.round(level)}% (${Math.round(rmsDb)}dB)`;
     this.compactLevelBar.style.setProperty("--level", `${level}%`);
     this.compactLevelText.textContent = `${Math.round(level)}%`;
 
-    const grad =
-      level < 30
-        ? "linear-gradient(90deg, #4caf50 0%, #4caf50 100%)"
-        : level < 70
-        ? "linear-gradient(90deg, #4caf50 0%, #ffeb3b 100%)"
-        : "linear-gradient(90deg, #4caf50 0%, #ffeb3b 50%, #f44336 100%)";
-    this.levelBar.style.background = grad;
+    // Keep level meter green without gradient
+    this.levelBar.style.background = "#4caf50";
   }
 
   drawLoop() {
@@ -595,7 +600,7 @@ class AudioRNG {
     if (this.waveformInfo) this.waveformInfo.textContent = "RNG stopped - Click Start RNG to begin again";
 
     if (this.levelBar) this.levelBar.style.width = "0%";
-    if (this.levelText) this.levelText.textContent = "Level: 0%";
+    if (this.levelText) this.levelText.textContent = "Level: 0% (-∞dB)";
     if (this.compactLevelBar) this.compactLevelBar.style.setProperty("--level", "0%");
     if (this.compactLevelText) this.compactLevelText.textContent = "0%";
 
